@@ -1,7 +1,7 @@
 ---
 name: sub-run-tests
 description: Run the pre-written TDD test suite against completed production code, fix failures, and confirm a green build
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - read/readFile
   - edit

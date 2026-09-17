@@ -1,7 +1,7 @@
 ---
 name: sub-qa-generate-tests
 description: Generate approved non-unit tests from a TestRail-published test-case document using repository conventions
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - read/readFile
   - edit

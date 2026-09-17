@@ -1,7 +1,7 @@
 ---
 name: sub-create-defect
 description: Create or update Jira defects from confirmed failed-case bug drafts, attach the failing case's evidence, and record the defect link back onto its TestRail result
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - read/readFile
   - search/fileSearch

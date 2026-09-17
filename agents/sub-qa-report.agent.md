@@ -1,7 +1,7 @@
 ---
 name: sub-qa-report
 description: Convert QA execution evidence into an auditable QA report
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - read/readFile
   - edit

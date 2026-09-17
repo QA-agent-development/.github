@@ -1,7 +1,7 @@
 ---
 name: sub-generate-docs
 description: Generate or update Confluence documentation for a completed .NET feature based on a Jira ticket and code changes
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - drax-coder/GetConfluencePage
   - drax-coder/CreateConfluencePage

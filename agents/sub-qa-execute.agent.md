@@ -1,7 +1,7 @@
 ---
 name: sub-qa-execute
 description: Execute approved QA test cases, request approval for missing browser tooling, and capture reproducible evidence
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - read/readFile
   - edit

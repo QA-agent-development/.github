@@ -1,7 +1,7 @@
 ---
 name: sub-read-jira
 description: Fetch a Jira ticket and return structured data — summary, status, description, and acceptance criteria
-model: Bedrock-deepseek-dev (litellm)
+model:  MAI-Code-1.1-Flash (copilot)
 tools:
   - drax-coder/GetJiraIssue
   - drax-coder/RecordPrompt
