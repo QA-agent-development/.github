@@ -1,7 +1,7 @@
 ---
 name: sub-qa-report
 description: Convert QA execution evidence into an auditable QA report
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - read/readFile
   - edit

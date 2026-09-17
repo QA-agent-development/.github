@@ -1,7 +1,7 @@
 ---
 name: sub-generate-docs
 description: Generate or update Confluence documentation for a completed .NET feature based on a Jira ticket and code changes
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - drax-coder/GetConfluencePage
   - drax-coder/CreateConfluencePage

@@ -1,7 +1,7 @@
 ---
 name: sub-update-jira
 description: Add a comment and/or transition a Jira ticket after work is completed
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - drax-coder/GetJiraIssue
   - drax-coder/AddJiraComment

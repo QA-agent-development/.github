@@ -1,7 +1,7 @@
 ---
 name: sub-qa-notify
 description: Send dedicated QA workflow notifications to Slack for starts, approval gates, results, and completion
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - drax-coder/SendSlackMessage
   - drax-coder/RecordPrompt

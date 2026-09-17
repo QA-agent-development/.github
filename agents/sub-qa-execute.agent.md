@@ -1,7 +1,7 @@
 ---
 name: sub-qa-execute
 description: Execute approved QA test cases, request approval for missing browser tooling, and capture reproducible evidence
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - read/readFile
   - edit

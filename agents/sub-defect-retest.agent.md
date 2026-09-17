@@ -1,7 +1,7 @@
 ---
 name: sub-defect-retest
 description: Re-run only the tests linked to a given Jira defect, record the outcome in TestRail, and update the defect with the verified result
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - read/readFile
   - search/fileSearch

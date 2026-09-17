@@ -1,7 +1,7 @@
 ---
 name: sub-qa-generate-tests
 description: Generate approved non-unit tests from a TestRail-published test-case document using repository conventions
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - read/readFile
   - edit
@@ -28,7 +28,7 @@ Single responsibility: read the test cases created in TestRail and generate or m
 6. `QA-CONFIG` or `APPLICATION-URL` - resolved client configuration containing `environment.applicationUrl` (e.g. `http://localhost:5000` or deployed URL)
 7. `CORRECTION-NOTES` - optional human feedback or defect fix details for targeted test maintenance
 8. `MAINTENANCE-MODE` - optional boolean (`true` when updating tests following application UI/flow changes or retests)
-9. `CODEBASE-SUMMARY-PATH` - optional `.agent-workspace/{ticket-lower}/CODEBASE-SUMMARY-{KEY}.md` from `sub-qa-explore`, when the orchestrator ran it this pass. A head start for Step 4.5's Ground-Truth Verification — read it first, but still confirm directly against the repository for anything it does not cover, since this agent is the one accountable for what ends up in the spec.
+9. `CODEBASE-SUMMARY` - optional inline text (not a file) returned by `sub-qa-explore`, when the orchestrator ran it this pass. A head start for Step 4.5's Ground-Truth Verification — read it first, but still confirm directly against the repository for anything it does not cover, since this agent is the one accountable for what ends up in the spec.
 10. Merged skill rules and skill file paths from the orchestrator
 
 ## Workflow
@@ -99,7 +99,7 @@ Do not execute tests; test execution belongs exclusively to `sub-qa-execute`.
 
 ### Step 4.5: Ground-Truth Verification (Hard Gate)
 
-Before a spec or page object can be considered finished, every navigation target, locator, and literal data value it contains must be traced to real evidence found by reading the repository — never left as an assumption carried over from the TestRail case text. This agent has no browser or network access, so "real evidence" means the actual source, not a live request. When `CODEBASE-SUMMARY-PATH` is supplied, read it first — it may already name the relevant routes, test frameworks, and conventions — but treat it as a starting point, not proof: verify anything it covers against the actual source file it names before relying on it.
+Before a spec or page object can be considered finished, every navigation target, locator, and literal data value it contains must be traced to real evidence found by reading the repository — never left as an assumption carried over from the TestRail case text. This agent has no browser or network access, so "real evidence" means the actual source, not a live request. When `CODEBASE-SUMMARY` is supplied, read it first — it may already name the relevant routes, test frameworks, and conventions — but treat it as a starting point, not proof: verify anything it covers against the actual source file it names before relying on it.
 
 For each page object and spec produced or modified this pass, confirm and record:
 - **Route**: the `goto()`/navigation target matches a path found in the application's routing, controller, or page source — not the site root by default and not a guess.

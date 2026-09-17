@@ -1,7 +1,7 @@
 ---
 name: sub-qa-test-cases
 description: Create an approval-ready Markdown document of acceptance-criteria-mapped non-unit test cases for publication to TestRail
-model: Bedrock-Kimi-dev (litellm)
+model: Bedrock-deepseek-dev (litellm)
 tools:
   - read/readFile
   - edit
