@@ -1,7 +1,7 @@
 ---
 name: sub-qa-execute
 description: Execute approved QA test cases, request approval for missing browser tooling, and capture reproducible evidence
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - read/readFile
   - edit
@@ -12,7 +12,7 @@ tools:
   - drax-coder/RecordTestRailResult
   - drax-coder/AddTestRailResultAttachment
 user-invocable: false
-argument-hint: "<TICKET-DATA> <TESTRAIL-CASES-PATH|QA-TEST-CASES-PATH> <TESTRAIL-CASES|TESTRAIL-SECTION-ID> [TEST-DATA-PATH] [PERMISSION-GRANTED] [TARGET-LOCATION] [RETEST-SCOPE] [VISIBILITY-MODE] [TESTRAIL-RUN-ID] [WORKSPACE-ROOT]"
+argument-hint: "<TICKET-DATA> <TESTRAIL-CASES-PATH|QA-TEST-CASES-PATH> <TESTRAIL-CASES|TESTRAIL-SECTION-ID> [TEST-DATA-PATH] [PERMISSION-GRANTED] [TARGET-LOCATION] [RETEST-SCOPE] [VISIBILITY-MODE] [TESTRAIL-RUN-ID] [WORKSPACE-ROOT] [ENVIRONMENT-CONFIRMED]"
 ---
 
 # Sub-Agent: QA Execute
@@ -33,7 +33,8 @@ Single responsibility: execute approved test cases through an existing project t
 10. `TESTRAIL-RUN-ID` - integer TestRail run created by the orchestrator via `CreateTestRailRun`, or `NONE`/absent when TestRail tracking is not active (e.g. `local-only` test management). Used to record each case's result live into TestRail as it is classified.
 11. `WORKSPACE-ROOT` - absolute workspace root, required by `AddTestRailResultAttachment` to validate evidence paths. Defaults to the current workspace root when absent.
 12. `AUTHORITATIVE-AC` - the acceptance criteria retrieved in orchestrator pre-flight. Used only to name, per case, which criterion its TestRail result maps to (Step 3) — full acceptance-criteria reconciliation and verdict assignment remain `sub-qa-report`'s responsibility, never duplicated here.
-13. Merged skill rules and skill file paths from the orchestrator
+13. `ENVIRONMENT-CONFIRMED` - optional `true` when the orchestrator is resuming this invocation from an active `AWAITING_ENVIRONMENT_READY` gate that the human just acted on, or `NONE`/absent otherwise. It records only that the human said they fixed the environment. **It never licenses skipping the Step 1.5 preflight**, which must still pass on its own probe evidence; its only effect is that a second consecutive failure is reported as a persisting environment problem rather than a first discovery.
+14. Merged skill rules and skill file paths from the orchestrator
 
 ## Workflow
 
@@ -45,6 +46,7 @@ The test execution agent MUST get and execute the test cases created in TestRail
 - If `TESTRAIL-CASES-PATH` is not present but `TESTRAIL-SECTION-ID` is provided, call `drax-coder/GetTestRailSectionCases(sectionId=TESTRAIL-SECTION-ID)` to fetch the test cases created in TestRail.
 - Fall back to `QA-TEST-CASES-PATH` only when `config.testManagement.provider` is `local-only` or TestRail publication was skipped.
 - Confirm every selected case has its TestRail case ID (`id` or `C{id}`), title, steps (`custom_steps` or `custom_steps_separated`), and expected result (`custom_expected`).
+- `TESTRAIL-CASES-PATH` was normalized at ingestion (orchestrator Rule 26), so these fields hold plain text. If any still contains an HTML tag or an encoded entity such as `&amp;`, the normalization step was skipped: report it instead of copying the markup into an assertion, a result comment, or `QA-RESULTS-{KEY}.md`. Never re-encode plain text back into HTML when writing a `RecordTestRailResult` comment.
 
 Read the skill files, TestRail test cases, and optional test data. Confirm every selected case has an expected result and TestRail case ID.
 
@@ -95,7 +97,64 @@ RESUME-WITH: PERMISSION-GRANTED=INSTALL-PLAYWRIGHT=true
 
 The orchestrator owns the human conversation. A subagent must return this gate instead of claiming that it asked the human directly.
 
-If the environment cannot support a case, mark it `BLOCKED` with the exact reason. Do not silently skip it.
+If the environment cannot support an individual case, mark that case `BLOCKED` with the exact reason. Do not silently skip it. When the environment cannot support *any* case, because the application itself is unreachable, do not classify cases at all: Step 1.5 halts the run instead.
+
+### Step 1.5: Environment Readiness Preflight (Hard Gate)
+
+An application that is running is not the same as an application the browser can load. Before executing a single case, prove that the Playwright browser can actually reach the resolved application URL, and resolve the origin it really serves on. **Nothing in this step records a TestRail result.**
+
+**Preferred implementation.** `.github/scripts/check-app-ready.mjs` performs this entire preflight deterministically. Run it instead of improvising the probes:
+
+```
+node .github/scripts/check-app-ready.mjs {applicationUrl} --modules-from {harness-dir}
+```
+
+`{harness-dir}` is where Playwright is installed (the workspace root for `TARGET-LOCATION=REPO`, or `.agent-workspace/{ticket-lower}/playwright/` for `WORKSPACE`). It prints one JSON object and exits `0` when the browser loaded an effective base URL, `1` when the environment is not ready, and `2` when Playwright itself could not be loaded, which is a tooling problem that belongs to the Tooling Permission Gate above rather than an environment verdict. Read `ready`, `effectiveBaseUrl`, `originMigrated`, `ignoreHTTPSErrors`, `diagnosis`, and `remedy` from its output and carry them into step 6 or 7 below.
+
+This script is a convenience, never a hard dependency: a cloud agent may receive these instructions without it. When it is absent or Node cannot run it, perform steps 1 through 7 manually as written below. The rules are identical either way.
+
+**1. Resolve the candidate base URL.** Take `environment.applicationUrl` from `QA-CONFIG` (or `APPLICATION-URL`). Treat it as a candidate, not a fact.
+
+**2. Probe it at the HTTP level, without following redirects.** Classify the response:
+
+| Probe result | Meaning | Action |
+|---|---|---|
+| `2xx` or `4xx` | the origin serves the app | adopt as `EFFECTIVE-BASE-URL`, go to 3 |
+| `3xx` to the same origin | ordinary in-app redirect | adopt the candidate, go to 3 |
+| `3xx` to a different scheme, host, or port | the app redirects off the configured origin | go to 4 |
+| connection refused, DNS failure, timeout | nothing is listening | `ENVIRONMENT_NOT_READY`, halt per 6 |
+
+A transport-level probe is necessary but never sufficient. A `307` and an untrusted TLS certificate both answer a probe while still being unloadable in a browser. Never treat a non-error HTTP status as proof that the run can proceed.
+
+**3. Probe the effective origin with the real browser.** Launch the same Playwright browser the suite will use and navigate to `EFFECTIVE-BASE-URL` once. This is the only check that proves TLS trust, the redirect chain, and browser-level reachability together. A navigation error here (`net::ERR_CERT_AUTHORITY_INVALID`, `net::ERR_CONNECTION_REFUSED`, `net::ERR_EMPTY_RESPONSE`, or a navigation timeout) means the suite cannot run: go to 5, then halt per 6 if unresolved.
+
+**4. Origin migration (a redirect off the configured origin).** A local development server that redirects HTTP to HTTPS is the common case. An ASP.NET Core app whose pipeline calls `UseHttpsRedirection` outside its non-Development branch serves plain HTTP while only an HTTP port is bound, but answers the very same URL with a `307` to its HTTPS port once both are bound. The identical configured URL therefore behaves differently depending on which launch profile started the app, which is exactly the intermittency this preflight exists to absorb.
+- Follow the redirect once and probe its target.
+- If the target serves, adopt it as `EFFECTIVE-BASE-URL` and record the migration: the configured URL, the observed redirect, and the origin actually used.
+- If the target does not serve, for example a redirect to an HTTPS port nothing is listening on, that is `ENVIRONMENT_NOT_READY`. Halt per 6 and name both the configured URL and the unreachable redirect target.
+- Never silently keep navigating a base URL that redirects off-origin. Relative `goto()` paths still resolve, but every URL assertion built from the configured origin will then fail for a reason that has nothing to do with the product.
+
+**5. Trusted-certificate handling, for loopback development origins only.** When the browser probe fails with a certificate error and the `EFFECTIVE-BASE-URL` host is a loopback address (`localhost`, `127.0.0.1`, `::1`), an untrusted local development certificate is the cause. Set `ignoreHTTPSErrors: true` in the harness configuration, record that it was enabled and why, and repeat the browser probe once.
+- **Loopback hosts only.** Never set `ignoreHTTPSErrors` for a remote, staging, or production host. There, a certificate error is a real finding about the environment and must halt instead, reported as `ENVIRONMENT_NOT_READY` with the certificate error verbatim.
+- Naming the platform remedy in the halt message (for example `dotnet dev-certs https --trust`) is a useful note for the human, never an action this agent performs.
+
+**6. Halt instead of recording results.** When the preflight cannot produce a loadable `EFFECTIVE-BASE-URL`, return this gate and stop. Do not execute specs, do not classify cases, do not call `RecordTestRailResult` or `AddTestRailResultAttachment`, and do not write `QA-RESULTS` artifacts:
+
+```text
+QA EXECUTION HALTED
+===================
+STATUS: ENVIRONMENT_NOT_READY
+CONFIGURED-URL: {environment.applicationUrl}
+EFFECTIVE-URL: {origin actually probed, or NONE}
+PROBE: {HTTP status or transport error} / {browser navigation error}
+DIAGNOSIS: {nothing listening | redirect target unreachable | untrusted certificate on a non-loopback host | other}
+CASES-AFFECTED: {count} (none recorded, because no case was executed)
+REMEDY: {the concrete thing the human must do, e.g. start the application on {url}, or start it with the launch profile that binds {port}}
+QUESTION: The application at {configured-url} could not be loaded by the browser ({diagnosis}). Start or correct the environment and reply `retry` to resume execution, or `stop` to end this run. (retry/stop)
+RESUME-WITH: ENVIRONMENT-CONFIRMED=true
+```
+
+**7. Pass the effective origin to the suite.** Once the preflight succeeds, set `BASE_URL` to `EFFECTIVE-BASE-URL`, never to the unverified configured value, and state both in `QA-RESULTS-{KEY}.md` whenever they differ.
 
 ### Step 2: Execute Approved Cases
 
@@ -122,10 +181,15 @@ Before running assertions:
 - remove only disposable runner output that is not referenced by the evidence manifest; retain the harness/specs as reproducible execution evidence.
 
 Use a deterministic execution pipeline:
-1. Start the application once, preferably through Playwright `webServer`, on an available port and wait for an HTTP readiness response before launching tests.
+1. Reuse the application instance already verified by the Step 1.5 preflight. When nothing was running and this invocation must start one, start it once through Playwright `webServer`, bound to the port `EFFECTIVE-BASE-URL` names, never on an arbitrary "available" port, which would leave `BASE_URL` pointing at an origin nothing serves. Set `reuseExistingServer: true` for local runs so an already-running application is reused instead of triggering a second bind on a port that is already taken. Then re-confirm readiness with the browser-level probe from Step 1.5, not a transport-level status alone.
 2. Validate the generated harness with `npx playwright test --list` (and its local typecheck when configured).
 3. Run one high-risk smoke case that proves browser launch, application readiness, selectors, and fixture assumptions.
-4. If the smoke passes, run the selected suite. Use up to 4 workers for independent read-only cases; use 1 worker only when tests mutate shared state or repository evidence requires serialization.
+4. Branch on the smoke result before running anything else. **A failed smoke case never falls through to the full suite.**
+   - Classify its root cause with the diagnostic procedure below (`ENVIRONMENT`, `HARNESS`, or `PRODUCT`) before deciding anything.
+   - `ENVIRONMENT`: the application or browser could not be reached at all. Return the `ENVIRONMENT_NOT_READY` gate from Step 1.5 and stop, recording no case results. Running the suite would only reproduce the same transport failure once per case.
+   - `HARNESS`: a selector, route, or fixture in the smoke spec is wrong. Correct that one thing from repository or runtime evidence, rerun the smoke case, and allow at most two such correction attempts. If the third smoke attempt still fails for a harness reason, halt with `STATUS: HARNESS_NOT_VIABLE`, name the unresolved selector or route, and record no case results.
+   - `PRODUCT`: the application loaded and the approved expected behavior was genuinely not observed. This is real evidence. Keep it, classify the smoke case `FAILED`, and continue into the suite so each remaining case produces its own result.
+   - Only when the smoke passes, or fails for a `PRODUCT` reason, run the selected suite. Use up to 4 workers for independent read-only cases; use 1 worker only when tests mutate shared state or repository evidence requires serialization.
 5. Use locator, response, or URL conditions for readiness. Do not use `networkidle` when third-party images, analytics, streaming, or other unrelated requests can delay the page.
 6. Stop the application process started by this invocation in a `finally`-equivalent cleanup step, whether tests pass or fail.
 
@@ -186,6 +250,8 @@ Use exactly one status per case:
 
 **A case that cannot run because an earlier case's product defect blocks it is `FAILED`, not `BLOCKED` (Hard Rule).** When cases share a flow (e.g. every case after login depends on login succeeding) and an early case reproduces a real product defect that then prevents every dependent case from reaching its own steps, that is not an environment problem — it is the same product defect manifesting once per case. Classify every one of those dependent cases `FAILED`, with an actionable failure reason that names the upstream case it inherits the defect from (e.g. `"Blocked by the login failure reproduced in C41; steps beyond login could not be reached"`), and preserve whatever evidence exists up to the point of failure. Reserve `BLOCKED` strictly for failures with no product cause at all — the harness, environment, or a missing precondition, never a cascade from a defect already reproduced in this run. **This matters most exactly when most or all cases in a run fail for what looks like one shared cause: that is a signal to look closer at each case's own evidence, never a reason to lump them together or to downgrade them to `BLOCKED` so they are quietly excluded from defect filing.**
 
+**An environment that blocks every case is one run-level halt, not one `BLOCKED` result per case (Hard Rule).** The rule above governs a cascade with a product cause. This rule governs its mirror image. When no case reached its own steps because the application, browser, or harness was never viable (nothing was listening, the base URL redirected somewhere unreachable, the browser could not load the origin, the build failed), there is nothing to report per case, because nothing was tested. Do not classify those cases at all. Return the `ENVIRONMENT_NOT_READY` or `HARNESS_NOT_VIABLE` gate, leave every case in the TestRail run with no result, and let the human fix the environment and resume. Recording N `blocked` results with N evidence attachments for one dead environment is actively harmful: it buries the single real cause under per-case noise, spends the run's history on a non-finding, and makes one fixable environment problem look like N untestable cases. Reserve per-case `BLOCKED` for a case that is individually untestable in an otherwise working environment, such as a removed flow, a credential only that case needs, or a precondition only that case requires.
+
 For every failure capture:
 - case ID and acceptance criterion
 - severity: `BLOCKER`, `MAJOR`, `MINOR`, or `TRIVIAL`
@@ -228,6 +294,9 @@ Write `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md` containing:
 # QA Results: {KEY}
 
 ## Environment
+<!-- MUST state: configured applicationUrl, the EFFECTIVE-BASE-URL the readiness
+     preflight verified, whether an origin migration occurred and why, and whether
+     ignoreHTTPSErrors was enabled for a loopback host. -->
 ## Frameworks and Commands
 ## Execution Summary
 ## Case Results
@@ -245,7 +314,6 @@ Write `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md` containing:
 ## Blocked and Not-Run Cases
 ## Regression Observations
 ## Playwright CLI Diagnostics & Debug Guide
-```
 ## Evidence Index
 ```
 
@@ -266,7 +334,8 @@ QA RESULTS
 ==========
 TICKET: {KEY}
 ARTIFACT: .agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md
-OUTCOME: PASSED | FAILED | BLOCKED
+OUTCOME: PASSED | FAILED | BLOCKED | ENVIRONMENT_NOT_READY | HARNESS_NOT_VIABLE
+ENVIRONMENT PREFLIGHT: OK (effective base URL {url}{, migrated from {configured}}) | HALTED ({diagnosis})
 TOTAL: {count}
 PASSED: {count}
 FAILED: {count}
@@ -291,6 +360,8 @@ TESTRAIL RESULT IDS: {caseId}={resultId}, ...
 - Do not install or switch test frameworks without explicit human permission. When Playwright or required test packages are missing and no decision was supplied, return the structured permission gate to the orchestrator before installing, declining, or writing result artifacts.
 - Do not run git commands.
 - Do not make live calls to production or external services.
+- Do not set `ignoreHTTPSErrors`, pass `--ignore-certificate-errors`, or otherwise weaken TLS verification for any host that is not a loopback address. A certificate error against a remote, staging, or production origin is a finding to report, never something to suppress so a run can proceed.
+- Do not record per-case results for a run that never reached the application. Halt with the environment gate instead.
 - Do not use real PII, health records, credentials, or secrets.
 - Do not capture successful-case video unless effective `VISIBILITY-MODE=RECORD`; never attach unrelated Playwright output.
 - Do not call another subagent.

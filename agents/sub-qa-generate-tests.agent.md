@@ -1,7 +1,7 @@
 ---
 name: sub-qa-generate-tests
 description: Generate approved non-unit tests from a TestRail-published test-case document using repository conventions
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - read/readFile
   - edit
@@ -65,6 +65,7 @@ To ensure long-term maintainability and prevent duplicated interaction logic, te
   3. `getByText` (e.g. `getByText('Welcome back')`)
   4. `getByTestId` (e.g. `getByTestId('cart-item')`)
   5. CSS or XPath selectors **only as an absolute last resort** when no accessible role, label, text, or test-id is viable.
+- **Treat the TestRail case text as plain text**: `TESTRAIL-CASES-PATH` is normalized at ingestion (orchestrator Rule 26). If a step or expected result still carries an HTML tag or an encoded entity such as `&amp;`, do not copy it into a locator, a URL, or an assertion literal, because an encoded entity would make the spec assert the wrong string. Flag it in the manifest instead.
 - **Never invent selectors or routes**: Extract every locator and navigation target from real application evidence in this repository — view/component templates, routing/controller source, or existing tests — never from assumption or convention (e.g. never assume a feature lives at `/`; find the actual route in the controller/router source). If a referenced element or flow cannot be found, flag it in the manifest instead of guessing.
 - **Resolve `dataAssumptions` before writing a value into a spec**: When a TestRail case (or its `QA-TEST-CASES-{KEY}.json` source) carries a `dataAssumptions` entry, its example values (search terms, category/filter names, counts, IDs, etc.) are illustrative placeholders, not verified facts. Search the repository for the real reference/seed data that backs that scenario (fixture files, seed data services, constants, enums) and substitute a real value found there. Never copy a `dataAssumptions`-flagged value into a spec unchanged.
 
@@ -90,7 +91,10 @@ Configure Playwright evidence without embedding binaries in reports or tool prom
 - `video: "retain-on-failure"`
 - `trace: "on-first-retry"`
 - one deterministic test per case ID, with the case ID in the test title and artifact names
-- **Base URL configuration**: Configure `baseURL` in `playwright.config.ts` using the resolved `environment.applicationUrl` from `QA-CONFIG` (fallback: `process.env.BASE_URL || '<configured-applicationUrl>'`). Never leave it as an ungrounded guess.
+- **Base URL configuration**: Configure `baseURL` in `playwright.config.ts` using the resolved `environment.applicationUrl` from `QA-CONFIG` (fallback: `process.env.BASE_URL || '<configured-applicationUrl>'`). Never leave it as an ungrounded guess. `process.env.BASE_URL` must come first in that expression, because `sub-qa-execute` overrides it with the origin its readiness preflight actually verified, which can differ from the configured value when the application redirects off it.
+- **Do not assert a URL against the configured origin.** Build URL expectations from `baseURL` or assert the path only. A development server that redirects HTTP to HTTPS moves the browser to a different scheme and port, and an assertion hard-coded to the configured origin then fails for a reason that has nothing to do with the product.
+- **`webServer`, when the harness starts the application itself**: set `reuseExistingServer: true` for local runs so an already-running instance is reused instead of triggering a second bind on a port that is already taken, and point `url` at the same origin as `baseURL` rather than an arbitrary free port.
+- **`ignoreHTTPSErrors` is loopback-only**: set it solely when `baseURL`'s host is `localhost`, `127.0.0.1`, or `::1`, where an untrusted local development certificate is the expected cause of a TLS failure. Never set it for a remote, staging, or production host, where a certificate error is a real finding about the environment. Record in the manifest whenever it is enabled and why.
 - deterministic preconditions; never hard-code credentials
 
 When a case needs customer or subscription data, read only the synthetic records from `TEST-DATA-PATH` (when not `NONE`) and reference them by field; never hand-author a customer record or reuse real data.

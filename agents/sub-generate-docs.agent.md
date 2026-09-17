@@ -1,7 +1,7 @@
 ---
 name: sub-generate-docs
 description: Generate or update Confluence documentation for a completed .NET feature based on a Jira ticket and code changes
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - drax-coder/GetConfluencePage
   - drax-coder/CreateConfluencePage
@@ -65,7 +65,8 @@ Present the draft to the calling agent and **wait for confirmation** before writ
 ### Step 4: Publish to Confluence
 
 - **New page**: Use `CreateConfluencePage` with `title`, `bodyAdf`, and optionally `parentPageId`.
-  The space key is pre-configured via `X-Confluence-Space` header — no need to pass it.
+  The space key is pre-configured via the `X-Confluence-Space` header — never pass it and never guess it.
+  `parentPageId` is optional: pass it **only** when a caller supplied a real page id or client configuration provides one (`integrations.confluence.parentPageId`). Otherwise omit it and let the page be created at the space root. Never invent a page id to fill the parameter — a non-existent parent returns `HTTP 404` with `The parent ID specified does not exist`, which misreads as a space or permission failure.
 - **Update**: Use `UpdateConfluencePage` with `pageId`, `title`, `bodyAdf`, and `version` (current + 1).
   If a 409 conflict error is returned, call `GetConfluencePage` again to get the latest version and retry.
 

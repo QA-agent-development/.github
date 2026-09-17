@@ -1,7 +1,7 @@
 ---
 name: sub-create-defect
 description: Create or update Jira defects from confirmed failed-case bug drafts, attach the failing case's evidence, and record the defect link back onto its TestRail result
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - read/readFile
   - search/fileSearch
@@ -92,8 +92,11 @@ Call `drax-coder/{defectManagement.createTool}` once with:
 - `labels`: `{defectManagement.labels}`
 - `priority`: chosen from `{QA-CONFIG.bug.priorities}` to match the draft's severity
 - `summary`: the test case title plus the observed failure, inventing no detail beyond the actual result
-- `testRailCaseId`: that case's TestRail id — when the configured `createTool` is `CreateJiraBug`, passing this makes the tool itself fetch "Steps to Reproduce" (and "Expected Result"/"Preconditions" where those headings exist) straight from TestRail and overwrite whatever text is in `sections` for those headings, so the case's own text is used verbatim by construction rather than by instruction alone.
-- `sections`: a dict whose keys follow `{QA-CONFIG.bug.sectionOrder}` exactly, populated **only** from `TESTRAIL-CASES-PATH`, the draft, and the actual run — the TestRail case ID and title, **the requirement reference(s) carried on the case (`refs`)**, preconditions, steps to reproduce, and expected result copied **verbatim** from that case's `custom_preconds`, `custom_steps`/`custom_steps_separated`, and `custom_expected` in `TESTRAIL-CASES-PATH` (or its Gherkin scenario text, verbatim, when the case has no classical steps — `testRailCaseId` only overrides a heading when TestRail actually returns steps for it, so a Gherkin-only case's `sections` text still stands), the observed actual result, environment (browser/project, base URL, run id), the artifact list, and a direct link back to the TestRail case. **Never paraphrase, reword, summarize, or reorder the case's steps or expected result, and never substitute the draft's own phrasing for the case's own text if the two differ — the TestRail case is authoritative.**
+- `testRailCaseId`: **omit this by default.** When the configured `createTool` is `CreateJiraBug`, passing it makes the tool itself fetch "Steps to Reproduce" (and "Expected Result"/"Preconditions" where those headings exist) straight from TestRail and overwrite whatever text is in `sections` for those headings. That fetch is the **unnormalized** TestRail read path, so it re-injects the raw `<p>` markup and encoded entities that orchestrator Rule 26 exists to strip, silently replacing clean text with dirty text and undoing the normalization for precisely the fields a human reads first.
+  - **Default: leave `testRailCaseId` out** and supply the preconditions, steps, and expected result in `sections` yourself from the normalized `TESTRAIL-CASES-PATH`. The case's own wording is still used verbatim; it simply arrives through the normalized file instead of the tool's re-fetch.
+  - Keep the traceability that `testRailCaseId` was providing by naming the TestRail case ID, its title, and a direct link to the case inside `sections`, which `QA-CONFIG.bug.sectionOrder` already accommodates.
+  - If a client's configuration genuinely requires `testRailCaseId`, treat the created issue as unverified: read it back with `{defectManagement.lookupTool}` and, if the description contains an HTML tag or an encoded entity such as `&amp;`, correct it through the configured update or comment path and report that the tool overwrote normalized text. Never leave a defect whose reproduction steps contain an encoded `&`, because the URL a human would copy from it is then wrong.
+- `sections`: a dict whose keys follow `{QA-CONFIG.bug.sectionOrder}` exactly, populated **only** from `TESTRAIL-CASES-PATH`, the draft, and the actual run — the TestRail case ID and title, **the requirement reference(s) carried on the case (`refs`)**, preconditions, steps to reproduce, and expected result copied **verbatim** from that case's `custom_preconds`, `custom_steps`/`custom_steps_separated`, and `custom_expected` in `TESTRAIL-CASES-PATH` (or its Gherkin scenario text, verbatim, when the case has no classical steps — `testRailCaseId` only overrides a heading when TestRail actually returns steps for it, so a Gherkin-only case's `sections` text still stands), the observed actual result, environment (browser/project, base URL, run id), the artifact list, and a direct link back to the TestRail case. **Never paraphrase, reword, summarize, or reorder the case's steps or expected result, and never substitute the draft's own phrasing for the case's own text if the two differ — the TestRail case is authoritative.** **"Verbatim" means verbatim against the normalized file** (Rule 26). TestRail returns every text field rendered to HTML, so `TESTRAIL-CASES-{KEY}.json` is normalized at ingestion and already holds plain text. Normalization is exactly two mechanical steps, unwrapping block tags into line breaks and decoding HTML entities, and is never a licence to reword, reorder, renumber, summarise, or drop anything. If a field you are copying still contains a tag or an encoded entity, the ingestion step was skipped: re-run it rather than hand-editing the text.
 
 `issueType` must be the tracker's existing defect type from config — never invent a custom type. Do not claim a cross-browser, performance, accessibility, or security classification unless the failing evidence itself demonstrates it.
 
@@ -114,7 +117,7 @@ Then call `drax-coder/{defectManagement.attachEvidenceTool}` with the returned i
 
 **Hard rules for every defect written:**
 - **Leave the assignee empty** whenever `{defectManagement.assignOnCreate}` is false, which is the default. Never select a default, fallback, or "most likely" user. Only an explicit `assignOnCreate: true` in client configuration permits an assignee, and even then never invent one.
-- Populate every field from `TESTRAIL-CASES-PATH`, the draft, the results JSON, and the evidence manifest only. Steps, preconditions, and expected result come verbatim from `TESTRAIL-CASES-PATH`, never from the draft's paraphrase of them. Never infer steps, environments, or failure reasons that the run did not produce.
+- Populate every field from `TESTRAIL-CASES-PATH`, the draft, the results JSON, and the evidence manifest only. Steps, preconditions, and expected result come verbatim from the normalized `TESTRAIL-CASES-PATH`, never from the draft's paraphrase of them and never from a tool's own re-fetch of TestRail. Never infer steps, environments, or failure reasons that the run did not produce.
 - Never send binary content or base64 through the model — the configured evidence-attachment tool reads files from the workspace directly.
 - Never attach evidence to `JIRA-KEY` (the source ticket) or to a different defect by inference.
 
@@ -161,6 +164,7 @@ Confirm every one of these, and state any that fail:
 6. Every retest outcome was reflected as a status change on the existing issue, not as a new issue.
 7. No Jira or TestRail operation is reported that was not actually performed in this session.
 8. Every created or updated defect's steps to reproduce, preconditions, and expected result match `TESTRAIL-CASES-PATH` verbatim for that caseId — none were paraphrased, reworded, or reconstructed.
+9. No written defect contains an HTML tag or an encoded HTML entity in its preconditions, steps, or expected result. If one does, `testRailCaseId` re-fetched unnormalized text from TestRail: correct the issue and report it.
 
 ## Safety Constraints
 

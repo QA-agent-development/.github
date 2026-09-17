@@ -1,7 +1,7 @@
 ---
 name: sub-defect-retest
 description: Re-run only the tests linked to a given Jira defect, record the outcome in TestRail, and update the defect with the verified result
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - read/readFile
   - search/fileSearch
@@ -14,7 +14,7 @@ tools:
   - drax-coder/AddTestRailResultAttachment
   - drax-coder/CompleteDefectRetest
 user-invocable: false
-argument-hint: "<DEFECT-KEY> <TESTRAIL-RUN-ID> <TARGET-LOCATION> <WORKSPACE-ROOT> <QA-CONFIG> [TESTRAIL-SECTION-ID] [APPLICATION-URL]"
+argument-hint: "<DEFECT-KEY> <TESTRAIL-RUN-ID> <TARGET-LOCATION> <WORKSPACE-ROOT> <QA-CONFIG> [TESTRAIL-SECTION-ID] [APPLICATION-URL] [ENVIRONMENT-CONFIRMED]"
 ---
 
 # Sub-Agent: Defect Retest
@@ -56,7 +56,11 @@ Generated specs embed their case ID in the test title (`test('[C408] ...')`), wh
 
 ### Step 3: Execute the Scoped Run
 
-Set `BASE_URL` to `{APPLICATION-URL}` (or `QA-CONFIG.environment.applicationUrl`) before running, then execute **only** the scoped tests:
+**Confirm the environment before running (Hard Gate).** Apply the same readiness preflight as `sub-qa-execute` Step 1.5 against `{APPLICATION-URL}`: probe it without following redirects, then navigate the real Playwright browser to it. `node .github/scripts/check-app-ready.mjs {APPLICATION-URL} --modules-from {harness-dir}` does this deterministically and prints `ready`, `effectiveBaseUrl`, and `diagnosis`; fall back to the manual steps when the script is unavailable. Adopt the origin the application actually serves as the effective base URL when it redirects off the configured one, and set `ignoreHTTPSErrors` only for a loopback host.
+- If the browser cannot load the application, return `STATUS: ENVIRONMENT_NOT_READY` with the diagnosis and stop. Record **no** TestRail result, do not mark the scoped cases `BLOCKED`, and do not transition the defect in either direction.
+- A retest that never reached the application has neither verified nor refuted the fix. Applying `defectManagement.transitions.verified` would falsely close it, and applying `reopen` would falsely blame the developer for an environment problem. Leave the defect exactly where it is and report why.
+
+Set `BASE_URL` to the preflight-verified effective origin (candidate `{APPLICATION-URL}`, or `QA-CONFIG.environment.applicationUrl`) before running, then execute **only** the scoped tests:
 
 ```
 npx playwright test -g "{playwright_grep}"

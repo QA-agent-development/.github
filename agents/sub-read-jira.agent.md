@@ -1,7 +1,7 @@
 ---
 name: sub-read-jira
 description: Fetch a Jira ticket and return structured data — summary, status, description, and acceptance criteria
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - drax-coder/GetJiraIssue
   - drax-coder/RecordPrompt

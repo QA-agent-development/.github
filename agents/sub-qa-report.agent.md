@@ -1,7 +1,7 @@
 ---
 name: sub-qa-report
 description: Convert QA execution evidence into an auditable QA report
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - read/readFile
   - edit
@@ -96,6 +96,8 @@ For each confirmed defect, add a `Bug Draft` subsection containing the proposed 
 **One `Bug Draft` subsection per failed case, always — never one draft covering several case IDs.** This holds even when every case in the run failed for what looks like the same root cause: write `N` separate drafts for `N` failed cases, each with its own case ID and evidence, not a single draft listing several `source case IDs`. A shared root cause is worth stating in each draft's body; it is never grounds to combine the drafts themselves, because `sub-create-defect` files exactly one defect per draft it receives.
 
 **Steps to reproduce, preconditions, and expected result MUST be copied verbatim from that case's entry in `TESTRAIL-CASES-{KEY}.json`** (`custom_preconds`, `custom_steps`/`custom_steps_separated`, `custom_expected`) — reformatted into a numbered list where the source is structured, but never paraphrased, summarized, reordered, or reworded. Do not reconstruct steps from the Playwright script's actions, the acceptance criterion, or your own understanding of the flow: the script and the report's own actual/observed result are the only permitted sources for what actually happened; the TestRail case is the only permitted source for what should have happened and how to reproduce it. If a case has no `custom_steps`/`custom_expected` (e.g. a Gherkin-only case), use its scenario text as written, still verbatim, and state in the draft that classical steps were unavailable rather than inventing them.
+
+**"Verbatim" means verbatim against the normalized file** (Rule 26). TestRail returns every text field rendered to HTML, so `TESTRAIL-CASES-{KEY}.json` is normalized at ingestion and already holds plain text. Normalization is exactly two mechanical steps, unwrapping block tags into line breaks and decoding HTML entities, and is never a licence to reword, reorder, renumber, summarise, or drop anything. If a field you are copying still contains a tag or an encoded entity, the ingestion step was skipped: re-run it rather than hand-editing the text.
 
 ### Step 4: Return Summary
 

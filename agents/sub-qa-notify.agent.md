@@ -1,7 +1,7 @@
 ---
 name: sub-qa-notify
 description: Send dedicated QA workflow notifications to Slack for starts, approval gates, results, and completion
-model:  MAI-Code-1.1-Flash (copilot)
+model:  Gemini 3.5 Flash (copilot)
 tools:
   - drax-coder/SendSlackMessage
   - drax-coder/RecordPrompt
@@ -31,6 +31,7 @@ Reject placeholders and missing required values. Never invent ticket status, tes
 | `AWAITING_QA_EXECUTION_APPROVAL` | QA Test Execution Ready for Approval |
 | `AWAITING_QA_TEST_APPROVAL` | Generated QA Tests Ready for Approval |
 | `AWAITING_TOOL_INSTALL_APPROVAL` | Test Tool Installation Permission Required |
+| `AWAITING_ENVIRONMENT_READY` | Application Environment Not Reachable |
 | `AWAITING_QA_REPORT_APPROVAL` | QA Report Ready for Approval |
 | `QA_WORKFLOW_COMPLETE` | QA Workflow Complete |
 
