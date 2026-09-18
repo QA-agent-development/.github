@@ -80,7 +80,7 @@ For every case in `RETEST-SCOPE`, when `TESTRAIL-RUN-ID` is a positive integer, 
 - `runId={TESTRAIL-RUN-ID}`, `caseId=<case id>`, `status=passed|failed|blocked`
 - `comment`: expected versus actual, the exact command run, and the evidence paths
 - `defects=[{DEFECT-KEY}]` - the retest belongs to this defect, so keep the link on the result
-- Retain each returned `result_id`. For any case that failed or was blocked, call `drax-coder/AddTestRailResultAttachment` with that `result_id`, only that case's evidence, and `WORKSPACE-ROOT`.
+- Retain each returned `result_id`. For **every** case that executed — passed, failed, or blocked — call `drax-coder/AddTestRailResultAttachment` with that `result_id`, only that case's evidence (screenshot, WebM recording, and trace), and `WORKSPACE-ROOT`. A passing retest is precisely the result that closes a defect, so it is the one that most needs evidence a human can open; never record a passing retest with an empty case history.
 
 Skip both calls when `TESTRAIL-RUN-ID` is `NONE`.
 

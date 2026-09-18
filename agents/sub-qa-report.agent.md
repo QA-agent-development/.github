@@ -86,7 +86,7 @@ In **TestRail Run Traceability**, state `TESTRAIL-RUN-ID` (or `NONE` if TestRail
 **Verification is a tool call, never an inference from the local artifact.** When `TESTRAIL-RUN-ID` is a positive integer, call `drax-coder/GetTestRailRunResults(runId={TESTRAIL-RUN-ID})` once and reconcile its `recorded_case_ids` against the cases in `QA-RESULTS-{KEY}.json`:
 - Every case present locally but absent from `recorded_case_ids` is a **traceability gap** — list it explicitly with its local status.
 - Every case whose TestRail `status` disagrees with its local status is a **traceability conflict** — list both values. TestRail is the live record; the disagreement itself is the finding, so never silently prefer one side.
-- Every `FAILED` or `BLOCKED` case whose TestRail result has an empty `attachment_ids` is an **evidence gap** — its captured evidence never reached the case.
+- Every executed case — `PASSED` as well as `FAILED` and `BLOCKED` — whose TestRail result has an empty `attachment_ids` is an **evidence gap**: its captured evidence never reached the case, leaving that result unverifiable to anyone reading TestRail. Report passing-case gaps with the same weight as failing ones; a green result with nothing behind it is the hardest one for a reader to check. `NOT RUN` (`retest`) cases are exempt, since they executed nothing.
 - Report the verified counts as `{recorded}/{executed} cases confirmed in TestRail run {id}`.
 
 A traceability gap does not by itself change the verdict, but it must never be hidden, and a `PASS` verdict may not be issued while an executed case has no confirmed TestRail result. If the tool call fails, say so plainly and mark traceability `UNVERIFIED` — never report unverified recording as confirmed.

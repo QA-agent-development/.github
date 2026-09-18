@@ -41,7 +41,7 @@ Determine target directories based on `TARGET-LOCATION`:
 - **When `TARGET-LOCATION` is `REPO`**:
   - Check whether a repository-level Playwright setup exists (`playwright.config.ts` or `playwright.config.js`).
   - If absent, scaffold the starter test structure in the repository root:
-    - `playwright.config.ts` (configured with `trace: 'on-first-retry'`, `screenshot: 'only-on-failure'`, `video: 'retain-on-failure'`, HTML reporter, JSON reporter)
+    - `playwright.config.ts` (configured with `trace: 'on'`, `screenshot: 'on'`, `video: 'on'`, HTML reporter, JSON reporter — evidence is captured for every case, passing ones included, because `sub-qa-execute` attaches evidence to every TestRail result)
     - `tsconfig.json` (if TypeScript configuration is needed)
     - `tests/` directory for test specs
     - `page-objects/` directory for Page Object classes
@@ -88,15 +88,17 @@ Generate **browser-based end-to-end (UI) tests** as the primary test form for ev
 ### Step 4: Handle Infrastructure and Evidence Configuration
 
 Configure Playwright evidence without embedding binaries in reports or tool prompts:
-- `screenshot: "only-on-failure"`
-- `video: "retain-on-failure"`
-- `trace: "on-first-retry"`
+- `screenshot: "on"`
+- `video: "on"`
+- `trace: "on"`
 - one deterministic test per case ID, with the case ID in the test title and artifact names
 - **Base URL configuration**: Configure `baseURL` in `playwright.config.ts` using the resolved `environment.applicationUrl` from `QA-CONFIG` (fallback: `process.env.BASE_URL || '<configured-applicationUrl>'`). Never leave it as an ungrounded guess. `process.env.BASE_URL` must come first in that expression, because `sub-qa-execute` overrides it with the origin its readiness preflight actually verified, which can differ from the configured value when the application redirects off it.
 - **Do not assert a URL against the configured origin.** Build URL expectations from `baseURL` or assert the path only. A development server that redirects HTTP to HTTPS moves the browser to a different scheme and port, and an assertion hard-coded to the configured origin then fails for a reason that has nothing to do with the product.
 - **`webServer`, when the harness starts the application itself**: set `reuseExistingServer: true` for local runs so an already-running instance is reused instead of triggering a second bind on a port that is already taken, and point `url` at the same origin as `baseURL` rather than an arbitrary free port.
 - **`ignoreHTTPSErrors` is loopback-only**: set it solely when `baseURL`'s host is `localhost`, `127.0.0.1`, or `::1`, where an untrusted local development certificate is the expected cause of a TLS failure. Never set it for a remote, staging, or production host, where a certificate error is a real finding about the environment. Record in the manifest whenever it is enabled and why.
 - deterministic preconditions; never hard-code credentials
+
+**Capture evidence for every case, not only failures (Hard Rule).** `sub-qa-execute` attaches evidence to the TestRail result of every case it records, including `PASSED`. `only-on-failure` / `retain-on-failure` / `on-first-retry` leave passing cases with nothing to attach, which turns a passing TestRail result into an unverifiable claim. Configure the three settings above as `on` regardless of `VISIBILITY-MODE`, and never downgrade them to save disk: the run's evidence is the deliverable. Keep `video.size` modest (e.g. `{ width: 1280, height: 720 }`) if size is a concern — reduce fidelity, never coverage.
 
 When a case needs customer or subscription data, read only the synthetic records from `TEST-DATA-PATH` (when not `NONE`) and reference them by field; never hand-author a customer record or reuse real data.
 
