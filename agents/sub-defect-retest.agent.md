@@ -30,7 +30,7 @@ Single responsibility: given a Jira defect key, re-run **only** the tests that d
 5. `QA-CONFIG` - resolved client configuration. `environment.applicationUrl` sets `BASE_URL`; `defectManagement.transitions.verified` names the status a passing retest moves the defect to, and `defectManagement.transitions.reopen` the status a failing retest moves it back to. `defectManagement.transitions.readyForRetest` (defaults to `Ready for QA`) is the only status a retest may start from, and `defectManagement.transitions.inProgress` (defaults to `QA In Progress`) is the status the ticket is moved to the moment testing actually starts. All four are required — a retest that does not move the ticket leaves the board misreporting the fix.
 6. `TESTRAIL-SECTION-ID` - optional, to resolve case titles and steps via `GetTestRailSectionCases`.
 7. `APPLICATION-URL` - optional explicit override of the target application URL.
-8. Merged skill rules and skill file paths (MUST include `defect-tracking` and `test-automation`).
+8. Merged skill rules and skill file paths from the orchestrator.
 
 ## Workflow
 
@@ -84,12 +84,30 @@ For every case in `RETEST-SCOPE`, when `TESTRAIL-RUN-ID` is a positive integer, 
 
 Skip both calls when `TESTRAIL-RUN-ID` is `NONE`.
 
+### Step 4.5: Reconcile the Run Before Touching the Defect (Hard Gate)
+
+Recording a result and that result actually being in the run are two different things, and every step after this one changes a ticket status a human reads. Skip this step only when `TESTRAIL-RUN-ID` is `NONE`.
+
+1. Call `drax-coder/GetTestRailRunResults(runId={TESTRAIL-RUN-ID})` and save the response to `.agent-workspace/{ticket-lower}/testrail-run-results.json`.
+2. Confirm every case in `RETEST-SCOPE` appears in `recorded_case_ids`:
+
+   ```
+   node .github/scripts/reconcile-testrail-run.mjs \
+        --results <your per-case results json> \
+        --run     .agent-workspace/{ticket-lower}/testrail-run-results.json \
+        --scope   {RETEST-SCOPE}
+   ```
+
+   It exits non-zero and names the missing ids. When Node cannot run it, compare the ids by hand under the same rule.
+3. Record any missing case, then re-confirm. Allow at most three passes.
+4. **If any case in `RETEST-SCOPE` still has no result, do not call `CompleteDefectRetest` at all.** Return `STATUS: RECORDING_INCOMPLETE` with the missing case ids and stop. Transitioning the defect on an unrecorded result moves a real ticket on evidence the run does not hold: a passing retest would close a bug nobody can verify, and a failing one would reopen it with no visible failure behind the reopen. Leave the defect exactly where it is.
+
 ### Step 5: Close the Loop on the Defect
 
 Call `drax-coder/CompleteDefectRetest` once per case in scope:
 
 - `defectKey={DEFECT-KEY}`, `testRailRunId={TESTRAIL-RUN-ID}`, `testRailCaseId=<case id>`
-- `passed`: true only when that case actually passed in this session
+- `passed`: true only when that case actually passed in this session **and** its result is confirmed present in the run by Step 4.5
 - `playwrightSummary`: the observed outcome, the command used, and the evidence paths
 - `evidence`: that case's workspace-relative evidence paths
 - `passedTransition`: `{QA-CONFIG.defectManagement.transitions.verified}`
@@ -117,8 +135,9 @@ STARTED: {readyForRetest} -> {inProgress} | ALREADY IN PROGRESS | NOT STARTED ({
 RETEST SCOPE: {case IDs} (resolved from the defect, not the full suite)
 COMMAND: {exact scoped command executed}
 RESULTS: {caseId}={PASSED|FAILED|BLOCKED}, ...
-OUTCOME: VERIFIED | STILL FAILING | PARTIAL | BLOCKED
+OUTCOME: VERIFIED | STILL FAILING | PARTIAL | BLOCKED | ENVIRONMENT_NOT_READY | RECORDING_INCOMPLETE
 TESTRAIL RESULTS RECORDED: {count} of {count} | SKIPPED (TESTRAIL-RUN-ID=NONE)
+TESTRAIL RECONCILED: COMPLETE ({recorded} of {scope} confirmed in run {runId}) | INCOMPLETE (missing case ids: {ids}) | SKIPPED (TESTRAIL-RUN-ID=NONE)
 EVIDENCE ATTACHED: {count} of {failed+blocked count}
 JIRA STATUS: {from} -> {to} | NOT CHANGED ({reason})
 EVIDENCE: {artifact directory}

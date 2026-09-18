@@ -33,7 +33,7 @@ Single responsibility: turn every confirmed failed-case bug draft into an eviden
    - **`defectManagement`** — the defect tracker contract. It supplies `provider`, the tool name for each operation (`createTool`, `lookupTool`, `commentTool`, `transitionTool`, `attachEvidenceTool`), `projectKey`, `issueType`, `labels`, `assignOnCreate`, and `transitions.reopen` / `transitions.verified`. **Never assume Jira and never hard-code a tool name — every tracker call in this agent is the tool named by this block.**
    - **`bug`** — the report contract: `sectionOrder`, `severities`, `priorities`.
 9. `RETEST-MODE` - optional. `true` when this invocation follows a retest of previously filed defects.
-10. Merged skill rules and skill file paths from the orchestrator (MUST include `defect-tracking`).
+10. Merged skill rules and skill file paths from the orchestrator.
 
 ## Workflow
 

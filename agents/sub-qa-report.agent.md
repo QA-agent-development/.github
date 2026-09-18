@@ -115,10 +115,13 @@ OPEN DEFECTS: {severity counts}
 BUG DRAFTS: {count}
 EVIDENCE MANIFEST: {path or None}
 TESTRAIL TRACEABILITY: {recorded}/{executed} confirmed in run {id} | UNVERIFIED | SKIPPED (TESTRAIL-RUN-ID=NONE)
+TESTRAIL UNRECORDED CASES: {case ids executed locally with no result in the run} or None
 TESTRAIL GAPS: {missing case IDs, status conflicts, evidence gaps} or None
 RETEST REQUIRED: YES | NO
 RELEASE DECISION: HUMAN REQUIRED
 ```
+
+**An unrecorded case is not a verified case (Rule 28).** When `GetTestRailRunResults` confirms fewer results than the number of executed cases, list every missing case id under `TESTRAIL UNRECORDED CASES`, set `RETEST REQUIRED: YES`, and never fold those cases into the headline pass count as though their status were established. A case whose result exists only in the local artifact has been executed but not recorded, and the run, not the artifact, is the record. Say which of the two you are quoting whenever they disagree.
 
 ## Constraints
 

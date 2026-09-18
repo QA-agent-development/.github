@@ -267,6 +267,8 @@ Do not treat an unrelated pre-existing failure as caused by this ticket. Record 
 
 **Live TestRail Result Recording (Mandatory, Hard Rule):**
 Immediately after classifying each case above — one call per case, never batched at the end — call `drax-coder/RecordTestRailResult` when `TESTRAIL-RUN-ID` is a positive integer:
+
+**What "per case" means mechanically, because this rule is the one most often broken.** Read the Playwright JSON reporter incrementally and record each case as its result becomes known, so TestRail fills up *while* the suite runs. Emitting a group of `RecordTestRailResult` calls together after the suite has finished is precisely the batching this rule forbids, even when the group eventually covers every case. Batching is not a harmless reordering: it makes recording a single point of failure, because nothing at all is in TestRail until the batch runs, and a turn that ends part-way through leaves the remaining cases with no result while the local artifact still reports them as passed. A run has already shipped this way with 3 of 10 cases recorded and 7 silently absent. If you find yourself holding several classified results with none of them recorded, you have already violated this rule: record them now, smallest case id first, and let Step 3.5 verify the outcome.
 - `runId`: `{TESTRAIL-RUN-ID}`
 - `caseId`: the case's TestRail numeric id (from `id` in `TESTRAIL-CASES-PATH`)
 - `status`: `passed` for `PASSED`, `failed` for `FAILED`, `blocked` for `BLOCKED`, `retest` for `NOT RUN`.
@@ -285,6 +287,28 @@ A workspace-relative path in a comment is unopenable for anyone reading TestRail
 Attach `PASSED`-case evidence only when effective `VISIBILITY-MODE=RECORD` or the case explicitly validates visual layout — routine passing runs must not bloat the TestRail case history. Apply the same redaction check used for the evidence manifest before attaching: never upload a capture containing secrets, tokens, PII, or unrelated user data.
 
 If `TESTRAIL-RUN-ID` is `NONE`, absent, or not a positive integer, skip both the result and attachment calls entirely and rely on the local `QA-RESULTS` artifacts only. Never fail the overall execution because a single `RecordTestRailResult` or `AddTestRailResultAttachment` call errors — capture the error, continue executing remaining cases, and report the TestRail recording and attachment failures alongside the case they belong to in Step 4's artifact.
+
+### Step 3.5: Recording Reconciliation (Hard Gate, before returning)
+
+An instruction to record every case cannot verify itself. Close the loop against the run before this agent returns, so a partially recorded run can never reach Phase 4 looking complete. Skip this step entirely only when `TESTRAIL-RUN-ID` is `NONE`.
+
+1. Call `drax-coder/GetTestRailRunResults(runId={TESTRAIL-RUN-ID})` and save the response to `.agent-workspace/{ticket-lower}/testrail-run-results.json`.
+2. Diff it against the cases you classified:
+
+   ```
+   node .github/scripts/reconcile-testrail-run.mjs \
+        --results .agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.json \
+        --run     .agent-workspace/{ticket-lower}/testrail-run-results.json \
+        --scope   {comma-separated TESTRAIL-CASES}
+   ```
+
+   It prints `complete`, `counts`, `missing`, `statusConflicts`, and `evidenceGaps`, and exits non-zero when anything is missing or conflicting. When Node cannot run it, compare `recorded_case_ids` against your classified case ids by hand under the same rules.
+3. **Record every case the diff reports as `missing`**, one call per case, then repeat steps 1 and 2. Allow at most three reconciliation passes.
+4. Resolve a `statusConflict` by re-recording that case with the status your own evidence supports, never by editing the local artifact to match TestRail.
+5. Close every `evidenceGap` by calling `drax-coder/AddTestRailResultAttachment` for that case's `result_id`, since a `FAILED` or `BLOCKED` result with no attachment is unusable to a TestRail reader.
+6. If any case is still unrecorded after the third pass, **say so explicitly in the return summary with the exact remaining case ids** and set `TESTRAIL RECONCILED` to `INCOMPLETE`. Never round the count up, never report your own tally of calls attempted in place of what the run actually holds, and never let the orchestrator infer completeness from silence.
+
+The number reported in Step 5 is the number the run confirms, not the number of calls this agent made. Those two figures diverging is the whole failure mode this gate exists to catch.
 
 ### Step 4: Write Artifact
 
@@ -317,13 +341,17 @@ Write `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md` containing:
 ## Evidence Index
 ```
 
-Also write `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.json` as a JSON array for Confluence publication, one object per executed case:
+Also write `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.json` as a JSON array, one object per executed case. It is the machine-readable source Phase 4 reads for reporting, publication, and the recording reconciliation:
 
 ```json
 [{ "test_case_id": "TESTRAIL-CASE-ID", "title": "case title", "status": "passed|failed|blocked", "duration": "e.g. 1.2s", "evidence": ["workspace-relative paths"] }]
 ```
 
 Omit `NOT RUN` cases from the JSON array; they carry no execution result to report.
+
+`evidence` MUST be an **array of workspace-relative file paths**, never a prose description of what was captured. A descriptive string here has already been rendered one character per row in a published report, because the consumer iterates the value expecting a list. Never copy a test case's descriptive `evidence` text (from `QA-TEST-CASES-{KEY}.json`, e.g. `"Screenshot of search results"`) into this field: that field describes what to capture, while this one records what was captured. Use `[]` when a passing case captured nothing.
+
+This `evidence` field is **local only**. Phase 4 strips it before calling `PublishQAReport`, because a workspace-relative path is unopenable for a Confluence reader; published evidence reaches people through the TestRail result attachment and the Jira defect instead. It stays in this file because the Step 3.5 reconciliation reads it.
 
 Generate statuses, durations, and failure details from the Playwright JSON reporter or existing framework result file. Do not manually transcribe successful durations, timestamps, or statuses from console output. Derive the Markdown report and evidence manifest from the same parsed result source so their counts cannot drift.
 
@@ -348,6 +376,7 @@ EVIDENCE: {artifact directory}
 HUMAN-REQUIRED CASES: {IDs or None}
 RESULTS JSON: .agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.json
 TESTRAIL LIVE RECORDING: {count} of {count} cases recorded via RecordTestRailResult | SKIPPED (TESTRAIL-RUN-ID=NONE) | {N} recording failures (see artifact)
+TESTRAIL RECONCILED: COMPLETE ({recorded} of {inScope} confirmed in run {runId}) | INCOMPLETE (missing case ids: {ids}) | SKIPPED (TESTRAIL-RUN-ID=NONE)
 TESTRAIL EVIDENCE ATTACHED: {count} of {failed+blocked count} cases attached via AddTestRailResultAttachment | SKIPPED (TESTRAIL-RUN-ID=NONE) | {N} attachment failures (see artifact)
 TESTRAIL RESULT IDS: {caseId}={resultId}, ...
 ```
