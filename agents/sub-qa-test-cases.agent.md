@@ -59,6 +59,14 @@ Apply the loaded `test-design` QA standards skill throughout test case design:
 - never propose, create, or modify unit, integration, component, contract, or API-only tests or their project configuration.
 - include platform, environment, compatibility, or interaction matrices only when Jira explicitly requires them.
 - state required data, platform, configuration, and preconditions known from Jira; list unknown execution details as questions.
+- **Never write a credential into a case (Hard Rule).** When a scenario needs an authenticated
+  session, the precondition names the *role*, e.g. `Given a standard user is signed in` or
+  `Given an administrator is signed in` — never a username, never a password, never "log in as
+  admin/admin". Case text is copied verbatim into Jira defects by `sub-create-defect`, so a
+  credential written here is republished into every bug report the case produces, and into the
+  TestRail case history besides. The signed-in session itself is established once by the harness
+  from `environment.auth`, so no case needs to describe how to log in unless the case *is* the
+  login test.
 - assign risk as `HIGH`, `MEDIUM`, or `LOW` based on user impact and likelihood.
 
 Do not invent requirements. Mark ambiguity as a question or assumption.

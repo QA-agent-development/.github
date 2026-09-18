@@ -480,6 +480,16 @@ Invoke `sub-qa-generate-tests` with:
 - `TEST-DATA` path from Phase 2 (or `NONE`)
 - `TARGET-LOCATION` (`REPO` or `WORKSPACE`)
 - `QA-CONFIG`: resolved client QA configuration containing `environment.applicationUrl` (e.g. `http://localhost:5000` or deployed test URL)
+- **`environment.auth`** when the application is behind a login wall, passed through verbatim.
+  It declares `loginPath`, the locator expressions, `authenticatedPath`, `signedInLocator`,
+  `storageStatePath`, and the *names* of the environment variables holding the credentials
+  (`usernameEnv`, `passwordEnv`). **It never contains a username or password, and the
+  orchestrator never resolves those variables itself, never prints their values, and never
+  passes a credential into a worker prompt.** The worker reads them from its own environment at
+  execution time. When `environment.auth.required` is true, `sub-qa-execute` must establish and
+  prove an authenticated session in its Step 1.5 preflight before any case runs, and must halt
+  the whole run with `ENVIRONMENT_NOT_READY` if it cannot — a missing test-account password
+  blocks every case for one cause and is one halt, never N `blocked` results.
 - merged skill rules (`test-design`)
 - **Explicit instruction: "Generate discrete Playwright automated tests for all test cases created in TestRail from {TESTRAIL-CASES-PATH} using the Page Object Model (POM). Target location is {TARGET-LOCATION}. Configure playwright.config.ts with baseURL set to process.env.BASE_URL || '{environment.applicationUrl}'. If TARGET-LOCATION is REPO, check for existing playwright.config.ts; if absent and authorized, scaffold starter config (playwright.config.ts, tsconfig.json, tests/, page-objects/) and write specs into tests/. If TARGET-LOCATION is WORKSPACE, write into .agent-workspace/{ticket-lower}/playwright/tests/ and page-objects/. Group user interactions into cohesive Page Object classes (reuse existing methods where available). Follow the strict locator hierarchy: 1) getByRole, 2) getByLabel, 3) getByText, 4) getByTestId, and CSS/XPath only as an absolute last resort — every route, locator, and literal data value MUST be traced to real evidence in this repository (view/component templates, routing/controller source, seed or fixture data), per your Ground-Truth Verification hard gate; the supplied CODEBASE-SUMMARY text is a head start, not a substitute for that check. Use auto-retrying web-first assertions (expect(locator)...); never use page.waitForTimeout or arbitrary sleep calls. Map each test 1:1 to a TestRail test case, embed its TestRail case ID in the test title (e.g. test('[C123] ...')), translate its TestRail steps into Page Object interactions, and assert its TestRail expected result. After generating or surgically updating each spec, call drax-coder/UpdateTestRailCase with caseId=<the TestRail case id> and automationSpec=<the workspace-relative spec path and test title> so the case points back at the test that automates it. Pass ONLY automationSpec — never title, steps, preconditions, or expectedResult, because the case content is the approved human-gated source of truth. Produce the test manifest QA-TESTS-{KEY}.md including its Ground-Truth Verification table. Do not execute tests or modify production code."**
 

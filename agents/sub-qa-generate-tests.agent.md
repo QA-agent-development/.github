@@ -98,6 +98,44 @@ Configure Playwright evidence without embedding binaries in reports or tool prom
 - **`ignoreHTTPSErrors` is loopback-only**: set it solely when `baseURL`'s host is `localhost`, `127.0.0.1`, or `::1`, where an untrusted local development certificate is the expected cause of a TLS failure. Never set it for a remote, staging, or production host, where a certificate error is a real finding about the environment. Record in the manifest whenever it is enabled and why.
 - deterministic preconditions; never hard-code credentials
 
+**Authenticated applications (`environment.auth.required: true` in `QA-CONFIG`).**
+When the application is behind a login wall, do not put a login into each spec. Scaffold a
+single Playwright `setup` project that signs in once and saves its storage state, and have
+every other project depend on it:
+
+```ts
+projects: [
+  { name: 'setup', testMatch: /auth\.setup\.ts/,
+    use: { trace: 'off', video: 'off', screenshot: 'off' } },
+  { name: 'chromium', dependencies: ['setup'],
+    use: { ...devices['Desktop Chrome'], storageState: '<environment.auth.storageStatePath>' } },
+]
+```
+
+- `auth.setup.ts` reads the credentials from `process.env[<usernameEnv>]` and
+  `process.env[<passwordEnv>]` named in `environment.auth` — **never** a literal, and never a
+  value read out of the config file, which holds only the variable names.
+- Build the login page object from `environment.auth`'s `usernameLocator`, `passwordLocator`
+  and `submitLocator` rather than inventing selectors, and assert `signedInLocator` on
+  `authenticatedPath` before saving state, so a failed login fails the setup rather than
+  every case.
+- Add the storage-state directory to `.gitignore` if it is not already ignored. **A storage
+  state file is a live session token; it is a credential, not an artifact.**
+
+**Evidence is disabled on the `setup` project deliberately, and this is a hard rule.**
+Playwright traces record network request bodies, so a trace of the login POST contains the
+password in plaintext, and `sub-qa-execute` now attaches every case's evidence to its
+TestRail result — where anyone with TestRail access can open it. Because every case starts
+from the saved storage state, no case ever performs the credential exchange and no case
+trace can contain it. Never enable trace, video, or screenshot on the `setup` project to
+"debug a login problem": read the preflight's `authProbe` output instead.
+
+**Cases that test the login form itself are the one exception.** They must exercise the real
+form, so their evidence necessarily captures the credential exchange. Generate them only
+against the disposable account that `environment.auth.testAccountIsDisposable` confirms, note
+in the manifest that their evidence contains a credential exchange, and never point them at a
+real user's account.
+
 **Capture evidence for every case, not only failures (Hard Rule).** `sub-qa-execute` attaches evidence to the TestRail result of every case it records, including `PASSED`. `only-on-failure` / `retain-on-failure` / `on-first-retry` leave passing cases with nothing to attach, which turns a passing TestRail result into an unverifiable claim. Configure the three settings above as `on` regardless of `VISIBILITY-MODE`, and never downgrade them to save disk: the run's evidence is the deliverable. Keep `video.size` modest (e.g. `{ width: 1280, height: 720 }`) if size is a concern — reduce fidelity, never coverage.
 
 When a case needs customer or subscription data, read only the synthetic records from `TEST-DATA-PATH` (when not `NONE`) and reference them by field; never hand-author a customer record or reuse real data.

@@ -154,6 +154,43 @@ QUESTION: The application at {configured-url} could not be loaded by the browser
 RESUME-WITH: ENVIRONMENT-CONFIRMED=true
 ```
 
+**6.5. Authenticate, when `environment.auth.required` is true.** An application behind a login
+wall answers with a perfectly healthy `200` login page, so every check above can pass while the
+suite is still one redirect away from testing nothing. Loading the origin is therefore not proof
+the run can proceed.
+
+Pass the `environment.auth` fields to the readiness script, which performs this stage
+deterministically:
+
+```
+node .github/scripts/check-app-ready.mjs {applicationUrl} --modules-from {harness-dir} \
+     --login-path {auth.loginPath} \
+     --username-env {auth.usernameEnv} --password-env {auth.passwordEnv} \
+     --username-locator "{auth.usernameLocator}" --password-locator "{auth.passwordLocator}" \
+     --submit-locator "{auth.submitLocator}" --signed-in-locator "{auth.signedInLocator}" \
+     --authenticated-path {auth.authenticatedPath} --storage-state {auth.storageStatePath}
+```
+
+It signs in, proves the session by loading `authenticatedPath` and waiting for
+`signedInLocator`, and saves the storage state the suite reuses. Read `authenticated`,
+`authProbe`, and `storageStatePath` from its output. Run this preflight from PowerShell: a
+POSIX-style shell on Windows rewrites a bare `/login` argument into a filesystem path before
+the script sees it. The script now names that specific failure (`mangled-path`) rather than
+reporting a broken application.
+
+**Credentials come only from the environment variables `environment.auth` names.** Never read a
+password out of the client config (it holds variable names, never values), never accept one in a
+prompt, never pass one as a command-line argument where it would land in shell history and the
+process list, and never write one into an artifact, a comment, or a TestRail result.
+
+**A failed or impossible login is a run-level halt, never a per-case result (Hard Rule).** It
+blocks every case for one cause, which is exactly the situation the environment rule below
+governs. Return `STATUS: ENVIRONMENT_NOT_READY` with the script's `diagnosis` and `remedy`,
+record **no** TestRail result for any case, and let the human fix it and resume. Recording N
+`blocked` results because one test account's password is unset is the reporting failure that rule
+exists to prevent. Reserve a per-case `BLOCKED` for a credential only one case needs, such as an
+admin-only flow in an otherwise working session.
+
 **7. Pass the effective origin to the suite.** Once the preflight succeeds, set `BASE_URL` to `EFFECTIVE-BASE-URL`, never to the unverified configured value, and state both in `QA-RESULTS-{KEY}.md` whenever they differ.
 
 ### Step 2: Execute Approved Cases
@@ -212,6 +249,16 @@ For approved Playwright cases:
 **Every executed case carries the same evidence set, passing cases included (Hard Rule).** A `passed` result with no artifact behind it is an assertion the reader has to take on faith, and it is exactly the result a fabricated or accidentally-skipped run produces. For every case that actually executed — `PASSED`, `FAILED`, and `BLOCKED` alike — capture and retain its end-of-test screenshot, its WebM recording, and its `trace.zip`, and additionally record the case ID, final URL, observed assertion summary, duration, and runner result in structured JSON. Do not save full-page HTML for any case; the trace already carries the DOM snapshots.
 
 The only cases without evidence are `NOT RUN` cases, which by definition executed nothing. Their explanation lives in the result comment instead.
+
+**Evidence from an authenticated run must not carry the credential exchange (Hard Rule).**
+Every case's screenshot, video, and trace is attached to its TestRail result, and a Playwright
+trace records network request bodies — so a trace of a login POST publishes the password to
+everyone with TestRail access. The harness avoids this by design: the `setup` project runs with
+trace, video, and screenshot off, and every case starts from the saved storage state, so no case
+performs the login. Confirm before attaching that no case's evidence covers a login submission.
+For a case that legitimately tests the login form, verify it used the disposable account
+(`environment.auth.testAccountIsDisposable`), and say so in `QA-RESULTS-{KEY}.md`. If a capture
+does contain a real credential, discard it and report the evidence gap rather than attaching it.
 
 Write `.agent-workspace/{ticket-lower}/evidence/EVIDENCE-MANIFEST.json` as structured JSON. Each entry must contain `caseId`, `acceptanceCriterion`, `status`, `scriptPath`, `files`, `capturedAt`, and `redactions`. Include only workspace-relative paths. Inspect captures for secrets, tokens, PII, or unrelated user data; redact or discard unsafe evidence and report the gap.
 
