@@ -1,7 +1,7 @@
 ---
 name: sub-qa-execute
 description: Execute approved QA test cases, request approval for missing browser tooling, and capture reproducible evidence
-model:  Gemini 3.5 Flash (copilot)
+model:  Gemini 3.7 Flash (copilot)
 tools:
   - read/readFile
   - edit

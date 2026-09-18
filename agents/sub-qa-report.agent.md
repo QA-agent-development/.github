@@ -1,7 +1,7 @@
 ---
 name: sub-qa-report
 description: Convert QA execution evidence into an auditable QA report
-model:  Gemini 3.5 Flash (copilot)
+model:  Gemini 3.7 Flash (copilot)
 tools:
   - read/readFile
   - edit

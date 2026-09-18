@@ -1,7 +1,7 @@
 ---
 name: sub-create-defect
 description: Create or update Jira defects from confirmed failed-case bug drafts, attach the failing case's evidence, and record the defect link back onto its TestRail result
-model:  Gemini 3.5 Flash (copilot)
+model:  Gemini 3.7 Flash (copilot)
 tools:
   - read/readFile
   - search/fileSearch

@@ -1,7 +1,7 @@
 ---
 name: sub-qa-generate-tests
 description: Generate approved non-unit tests from a TestRail-published test-case document using repository conventions
-model:  Gemini 3.5 Flash (copilot)
+model:  Gemini 3.7 Flash (copilot)
 tools:
   - read/readFile
   - edit

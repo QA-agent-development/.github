@@ -1,7 +1,7 @@
 ---
 name: sub-generate-docs
 description: Generate or update Confluence documentation for a completed .NET feature based on a Jira ticket and code changes
-model:  Gemini 3.5 Flash (copilot)
+model:  GPT-5 mini (copilot)
 tools:
   - drax-coder/GetConfluencePage
   - drax-coder/CreateConfluencePage

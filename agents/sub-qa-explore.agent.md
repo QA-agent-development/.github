@@ -1,7 +1,7 @@
 ---
 name: sub-qa-explore
 description: Optional read-only execution discovery for locating existing test paths and verified commands; not used for QA test-case design
-model:  Gemini 3.5 Flash (copilot)
+model:  GPT-5 mini (copilot)
 tools:
   - search/fileSearch
   - search/textSearch

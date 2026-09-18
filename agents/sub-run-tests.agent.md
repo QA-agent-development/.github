@@ -1,7 +1,7 @@
 ---
 name: sub-run-tests
 description: Run the pre-written TDD test suite against completed production code, fix failures, and confirm a green build
-model:  Gemini 3.5 Flash (copilot)
+model:  GPT-5 mini (copilot)
 tools:
   - read/readFile
   - edit
