@@ -11,7 +11,6 @@ tools:
   - drax-coder/GetTestRailSectionCases
   - drax-coder/GetTestRailRunResults
   - drax-coder/RecordTestRailResult
-  - drax-coder/AddTestRailResultAttachment
   - drax-coder/CompleteDefectRetest
 user-invocable: false
 argument-hint: "<DEFECT-KEY> <TESTRAIL-RUN-ID> <TARGET-LOCATION> <WORKSPACE-ROOT> <QA-CONFIG> [TESTRAIL-SECTION-ID] [APPLICATION-URL] [ENVIRONMENT-CONFIRMED]"
@@ -69,20 +68,20 @@ npx playwright test -g "{playwright_grep}"
 - Run from the resolved target location, and add the specific spec path when known to narrow further.
 - Never widen the selector, never drop the grep filter, and never run the full suite "to be safe". The entire point of a defect retest is that it touches only what the defect is about.
 - A directly dependent smoke check may be added when the scoped test cannot run in isolation - say so explicitly in the summary.
-- Capture screenshot, WebM video, and trace on failure, under `.agent-workspace/{ticket-lower}/evidence/{case-id}/`.
+- Keep `screenshot`, `video`, and `trace` at `'on'` in the harness config, so the reporter has an artifact to upload for every retested case, passing ones included.
 
 **Execution honesty**: never report a case as passing without an actual Playwright run in this session, and never skip, soft-assert, or comment out an assertion to make the retest green. A retest that still fails is the useful answer.
 
 ### Step 4: Record Each Case's Result in TestRail
 
-For every case in `RETEST-SCOPE`, when `TESTRAIL-RUN-ID` is a positive integer, call `drax-coder/RecordTestRailResult` immediately after that case finishes:
+Run the retest with `TESTRAIL_RUN_ID={TESTRAIL-RUN-ID}` set in the runner environment. The harness reporter (`qa-evidence/testrail-reporter.cjs`) records each retested case's result as its test finishes and uploads that case's screenshot, recording, and trace to it. A passing retest is precisely the result that closes a defect, so it is the one that most needs evidence a human can open; the reporter attaches to passing cases for exactly that reason. Never record a passing retest with an empty case history.
 
-- `runId={TESTRAIL-RUN-ID}`, `caseId=<case id>`, `status=passed|failed|blocked`
-- `comment`: expected versus actual, the exact command run, and the evidence paths
-- `defects=[{DEFECT-KEY}]` - the retest belongs to this defect, so keep the link on the result
-- Retain each returned `result_id`. For **every** case that executed — passed, failed, or blocked — call `drax-coder/AddTestRailResultAttachment` with that `result_id`, only that case's evidence (screenshot, WebM recording, and trace), and `WORKSPACE-ROOT`. A passing retest is precisely the result that closes a defect, so it is the one that most needs evidence a human can open; never record a passing retest with an empty case history.
+Then:
+- Confirm every case in `RETEST-SCOPE` appears in `{harness-dir}/test-results/qa-evidence-summary.json` with a `resultId` and its attachments. Close any gap with `node .github/scripts/qa-evidence/attach-evidence.cjs --summary {summary-path} --retry-testrail`.
+- Add the defect link that the reporter does not know about: call `drax-coder/RecordTestRailResult` **only** for a case the run never reached, and carry `defects=[{DEFECT-KEY}]` on it.
+- For the executed cases, the defect link is written in Step 6 when the defect itself is updated, so the result is not re-recorded here.
 
-Skip both calls when `TESTRAIL-RUN-ID` is `NONE`.
+Leave `TESTRAIL_RUN_ID` unset when `TESTRAIL-RUN-ID` is `NONE`.
 
 ### Step 4.5: Reconcile the Run Before Touching the Defect (Hard Gate)
 

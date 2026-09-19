@@ -67,7 +67,27 @@ Apply the loaded `test-design` QA standards skill throughout test case design:
   TestRail case history besides. The signed-in session itself is established once by the harness
   from `environment.auth`, so no case needs to describe how to log in unless the case *is* the
   login test.
-- assign risk as `HIGH`, `MEDIUM`, or `LOW` based on user impact and likelihood.
+- **Assign `priority` from the consequence of failure, using this rubric.** Priority answers
+  exactly one question: *if this case failed, how bad would the resulting defect be?* It is not
+  how likely the case is to pass, how central the case feels, or how much of the ticket it
+  quotes. Deriving it from consequence keeps it aligned with the severity `sub-qa-report` will
+  assign to the defect the case produces, so the two scales cannot drift apart.
+
+  | Priority | Assign when a failure would... | Expected defect severity |
+  |---|---|---|
+  | `HIGH` | defeat the acceptance criterion outright — the primary path does not work, data is lost or corrupted, a permission or security boundary is crossed, or every dependent case is blocked | `BLOCKER` / `MAJOR` |
+  | `MEDIUM` | degrade the criterion while leaving its primary path usable — validation not enforced, a wrong or missing error message, a mishandled boundary input, a broken secondary path | `MAJOR` / `MINOR` |
+  | `LOW` | change nothing a user acts on — wording, formatting, ordering, or other cosmetic detail over behaviour that itself works | `MINOR` / `TRIVIAL` |
+
+  **Exactly one case per acceptance criterion is `HIGH`** — the one that proves that criterion's
+  primary path. If two cases under one criterion both look `HIGH`, either the criterion covers
+  two behaviours and should map to two criteria, or the narrower case is `MEDIUM`. A set where
+  most cases are `HIGH` carries no information and is the failure mode this rubric exists to
+  prevent: state the count per level in the self-validation step and re-check any run where
+  `HIGH` exceeds the number of acceptance criteria.
+
+  Never assign priority by a case's position in the list, and never raise a case to `HIGH`
+  because it was hard to write.
 
 Do not invent requirements. Mark ambiguity as a question or assumption.
 

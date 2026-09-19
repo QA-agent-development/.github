@@ -10,7 +10,6 @@ tools:
   - execute/runInTerminal
   - drax-coder/GetTestRailSectionCases
   - drax-coder/RecordTestRailResult
-  - drax-coder/AddTestRailResultAttachment
 user-invocable: false
 argument-hint: "<TICKET-DATA> <TESTRAIL-CASES-PATH|QA-TEST-CASES-PATH> <TESTRAIL-CASES|TESTRAIL-SECTION-ID> [TEST-DATA-PATH] [PERMISSION-GRANTED] [TARGET-LOCATION] [RETEST-SCOPE] [VISIBILITY-MODE] [TESTRAIL-RUN-ID] [WORKSPACE-ROOT] [ENVIRONMENT-CONFIRMED]"
 ---
@@ -30,8 +29,8 @@ Single responsibility: execute approved test cases through an existing project t
 7. `QA-CONFIG` or `APPLICATION-URL` - resolved client configuration containing `environment.applicationUrl`
 8. `RETEST-SCOPE` - optional TestRail or local case IDs selected for rerun
 9. `VISIBILITY-MODE` - optional `AUTO`, `LIVE`, `RECORD`, or `STANDARD`; default `AUTO`
-10. `TESTRAIL-RUN-ID` - integer TestRail run created by the orchestrator via `CreateTestRailRun`, or `NONE`/absent when TestRail tracking is not active (e.g. `local-only` test management). Used to record each case's result live into TestRail as it is classified.
-11. `WORKSPACE-ROOT` - absolute workspace root, required by `AddTestRailResultAttachment` to validate evidence paths. Defaults to the current workspace root when absent.
+10. `TESTRAIL-RUN-ID` - integer TestRail run created by the orchestrator via `CreateTestRailRun`, or `NONE`/absent when TestRail tracking is not active (e.g. `local-only` test management). Passed to the runner as `TESTRAIL_RUN_ID`, where the evidence reporter uses it to record each case's result and upload its evidence during the run.
+11. `WORKSPACE-ROOT` - absolute workspace root, used to resolve harness and artifact paths. Defaults to the current workspace root when absent.
 12. `AUTHORITATIVE-AC` - the acceptance criteria retrieved in orchestrator pre-flight. Used only to name, per case, which criterion its TestRail result maps to (Step 3) — full acceptance-criteria reconciliation and verdict assignment remain `sub-qa-report`'s responsibility, never duplicated here.
 13. `ENVIRONMENT-CONFIRMED` - optional `true` when the orchestrator is resuming this invocation from an active `AWAITING_ENVIRONMENT_READY` gate that the human just acted on, or `NONE`/absent otherwise. It records only that the human said they fixed the environment. **It never licenses skipping the Step 1.5 preflight**, which must still pass on its own probe evidence; its only effect is that a second consecutive failure is reported as a persisting environment problem rather than a first discovery.
 14. Merged skill rules and skill file paths from the orchestrator
@@ -138,7 +137,7 @@ A transport-level probe is necessary but never sufficient. A `307` and an untrus
 - **Loopback hosts only.** Never set `ignoreHTTPSErrors` for a remote, staging, or production host. There, a certificate error is a real finding about the environment and must halt instead, reported as `ENVIRONMENT_NOT_READY` with the certificate error verbatim.
 - Naming the platform remedy in the halt message (for example `dotnet dev-certs https --trust`) is a useful note for the human, never an action this agent performs.
 
-**6. Halt instead of recording results.** When the preflight cannot produce a loadable `EFFECTIVE-BASE-URL`, return this gate and stop. Do not execute specs, do not classify cases, do not call `RecordTestRailResult` or `AddTestRailResultAttachment`, and do not write `QA-RESULTS` artifacts:
+**6. Halt instead of recording results.** When the preflight cannot produce a loadable `EFFECTIVE-BASE-URL`, return this gate and stop. Do not execute specs, do not classify cases, do not call `RecordTestRailResult`, and do not write `QA-RESULTS` artifacts:
 
 ```text
 QA EXECUTION HALTED
@@ -216,12 +215,12 @@ Before running assertions:
 - assert the approved behavior defined in the TestRail test case rather than incidental catalog cardinality: use exact counts only when the TestRail expected result requires them, and otherwise assert inclusion, exclusion, selected state, URL state, or category invariants.
 - start the application using its verified local command, execute the tests, and collect screenshots/traces/results under `.agent-workspace/{ticket-lower}/evidence/`.
 - do not modify production application code or existing permanent tests that are outside the ticket's scope.
-- remove only disposable runner output that is not referenced by the evidence manifest; retain the harness/specs as reproducible execution evidence.
+- remove only disposable runner output that is not referenced by `qa-evidence-summary.json`; retain the harness/specs as reproducible execution evidence, and never delete an artifact the summary still points at.
 
 Use a deterministic execution pipeline:
 1. Reuse the application instance already verified by the Step 1.5 preflight. When nothing was running and this invocation must start one, start it once through Playwright `webServer`, bound to the port `EFFECTIVE-BASE-URL` names, never on an arbitrary "available" port, which would leave `BASE_URL` pointing at an origin nothing serves. Set `reuseExistingServer: true` for local runs so an already-running application is reused instead of triggering a second bind on a port that is already taken. Then re-confirm readiness with the browser-level probe from Step 1.5, not a transport-level status alone.
 2. Validate the generated harness with `npx playwright test --list` (and its local typecheck when configured).
-3. Run one high-risk smoke case that proves browser launch, application readiness, selectors, and fixture assumptions.
+3. Run one smoke case that proves browser launch, application readiness, selectors, and fixture assumptions. Choose the highest-priority case in scope — a `HIGH` case is by definition one whose failure defeats an acceptance criterion, so it is the case most worth failing fast on. Break a tie by lowest case id, so the choice is reproducible across runs rather than a fresh judgement each time.
 4. Branch on the smoke result before running anything else. **A failed smoke case never falls through to the full suite.**
    - Classify its root cause with the diagnostic procedure below (`ENVIRONMENT`, `HARNESS`, or `PRODUCT`) before deciding anything.
    - `ENVIRONMENT`: the application or browser could not be reached at all. Return the `ENVIRONMENT_NOT_READY` gate from Step 1.5 and stop, recording no case results. Running the suite would only reproduce the same transport failure once per case.
@@ -241,8 +240,18 @@ Save focused evidence under `.agent-workspace/{ticket-lower}/evidence/`.
 For approved Playwright cases:
 - run the existing Playwright spec with its verified command
 - use zero retries for the initial diagnostic run, and confirm before running that the config has `screenshot: 'on'`, `video: 'on'`, and `trace: 'on'`. If the harness still carries `only-on-failure`, `retain-on-failure`, or `on-first-retry`, correct it to `on` before executing — those settings leave passing cases with no artifacts, and every recorded case must carry evidence
-- copy each case's artifacts into `.agent-workspace/{ticket-lower}/evidence/{case-id}/` for **every** executed case, whatever its status
-- use stable names such as `{case-id}-{status}.png` (e.g. `C123-passed.png`, `C123-failed.png`), `{case-id}-recording.webm`, and `{case-id}-trace.zip`
+- **set `TESTRAIL_RUN_ID` in the runner environment before invoking Playwright (Hard Gate).** The harness carries the TestRail evidence reporter (`qa-evidence/testrail-reporter.cjs`), and that reporter is what records results and uploads evidence. It reads the run id from this variable:
+
+  ```
+  TESTRAIL_RUN_ID={TESTRAIL-RUN-ID} npx playwright test          # bash
+  $env:TESTRAIL_RUN_ID='{TESTRAIL-RUN-ID}'; npx playwright test  # PowerShell
+  ```
+
+  With the variable set, each case's result is posted the moment that test finishes, and its screenshot, recording, and trace are uploaded to that result at the end of the run, straight from the paths the runner wrote. There is no copy step, no manifest to keep in sync, and no path to format. Do not copy artifacts anywhere, and do not attach them by hand.
+
+  Without the variable — or without TestRail credentials — the reporter prints why it is disabled and still writes the summary, so the run remains locally auditable. That is a configuration failure to report, not a reason to improvise an upload.
+
+- **read `{harness-dir}/test-results/qa-evidence-summary.json` after the run.** It is the record of what reached TestRail: per case, its status, `resultId`, every uploaded file with its attachment id, every artifact skipped and why, and any upload that failed. Classification in Step 3 below uses it, and Step 3.5 verifies against it. If `ok` is `false`, close the gap with the retry below rather than re-running the suite.
 - retain the existing Playwright spec path as reproduction evidence
 - never place image/video bytes or base64 in Markdown, prompts, or tool arguments
 
@@ -260,7 +269,7 @@ For a case that legitimately tests the login form, verify it used the disposable
 (`environment.auth.testAccountIsDisposable`), and say so in `QA-RESULTS-{KEY}.md`. If a capture
 does contain a real credential, discard it and report the evidence gap rather than attaching it.
 
-Write `.agent-workspace/{ticket-lower}/evidence/EVIDENCE-MANIFEST.json` as structured JSON. Each entry must contain `caseId`, `acceptanceCriterion`, `status`, `scriptPath`, `files`, `capturedAt`, and `redactions`. Include only workspace-relative paths. Inspect captures for secrets, tokens, PII, or unrelated user data; redact or discard unsafe evidence and report the gap.
+`{harness-dir}/test-results/qa-evidence-summary.json` is the evidence record for the run, written by the reporter: per case, its status, `resultId`, every uploaded file with its tracker attachment id, every artifact skipped and why, and any upload that failed. Do not write a parallel manifest of your own and do not edit this one - later phases read it, and a hand-maintained copy that disagrees with it is exactly the failure this design removes. Inspect the captures it lists for secrets, tokens, PII, or unrelated user data, and report any gap in Step 4's artifact.
 
 **Maintenance & Retest Execution (Surgical Rerun):**
 When executing a retest or in maintenance mode (`RETEST-SCOPE` provided):
@@ -315,33 +324,42 @@ For every failure capture:
 
 Do not treat an unrelated pre-existing failure as caused by this ticket. Record it separately as an observed risk.
 
-**Live TestRail Result Recording (Mandatory, Hard Rule):**
-Immediately after classifying each case above — one call per case, never batched at the end — call `drax-coder/RecordTestRailResult` when `TESTRAIL-RUN-ID` is a positive integer:
+**TestRail Result Recording — who records what (Hard Rule):**
 
-**What "per case" means mechanically, because this rule is the one most often broken.** Read the Playwright JSON reporter incrementally and record each case as its result becomes known, so TestRail fills up *while* the suite runs. Emitting a group of `RecordTestRailResult` calls together after the suite has finished is precisely the batching this rule forbids, even when the group eventually covers every case. Batching is not a harmless reordering: it makes recording a single point of failure, because nothing at all is in TestRail until the batch runs, and a turn that ends part-way through leaves the remaining cases with no result while the local artifact still reports them as passed. A run has already shipped this way with 3 of 10 cases recorded and 7 silently absent. If you find yourself holding several classified results with none of them recorded, you have already violated this rule: record them now, smallest case id first, and let Step 3.5 verify the outcome.
+| Case | Recorded by | How |
+|---|---|---|
+| Executed by Playwright (`PASSED`, `FAILED`, `BLOCKED`) | the reporter, during the run | already done when the suite exits; confirm in `qa-evidence-summary.json` |
+| Never executed (`NOT RUN`, and any case with no spec) | this agent | one `drax-coder/RecordTestRailResult` call per case |
+
+The reporter posts each executed case's result as that test finishes, so TestRail fills up *while* the suite runs, and uploads its evidence to that result. **Do not re-record a case that appears in `qa-evidence-summary.json`** — a second result for the same case adds a duplicate to the case history and makes the run's counts disagree with themselves.
+
+For every case the run never reached, call `drax-coder/RecordTestRailResult` when `TESTRAIL-RUN-ID` is a positive integer:
 - `runId`: `{TESTRAIL-RUN-ID}`
 - `caseId`: the case's TestRail numeric id (from `id` in `TESTRAIL-CASES-PATH`)
-- `status`: `passed` for `PASSED`, `failed` for `FAILED`, `blocked` for `BLOCKED`, `retest` for `NOT RUN`.
-- `comment`: a concise actionable summary — expected vs actual result, the exact command or spec/test name run, and workspace-relative evidence paths (screenshot/video/trace) for failures.
-- `elapsed`: the case's duration from the Playwright JSON reporter (e.g. `"12s"`), when available.
+- `status`: `retest` for `NOT RUN`, `blocked` for a case that is individually untestable in a working environment.
+- `comment`: the concrete reason, prefixed `NOT RUN — ` where it applies.
+- `elapsed`: omit — nothing ran.
 - `defects`: `[]` — the orchestrator links defects in Phase 4 after Jira bug creation.
-- **Retain the returned `result_id` for every call.** It is the only handle that can carry evidence onto the case, and it is required by the attachment step below.
 
 **`NOT RUN` cases MUST still be visible in TestRail (Hard Rule).** A case the human can see in the run but which carries no result is indistinguishable from one the agent forgot. Record every `NOT RUN` case as `retest` with a comment naming the concrete reason (`Playwright installation declined by human`, `requires unavailable credentials`, `outside approved execution scope`, ...) and the prefix `NOT RUN — `. Never leave a case in the run untested and unexplained, and never record `NOT RUN` as `passed` or `blocked` to make the run look complete.
 
-**Evidence Attachment (Mandatory for every executed case, `PASSED` included):**
-A workspace-relative path in a comment is unopenable for anyone reading TestRail. Immediately after `RecordTestRailResult` returns a `result_id` for **any** case that executed — `PASSED`, `FAILED`, or `BLOCKED` — call `drax-coder/AddTestRailResultAttachment` once for that case:
-- `resultId`: the `result_id` just returned for this case.
-- `filePaths`: exactly that case's evidence files from `.agent-workspace/{ticket-lower}/evidence/{case-id}/` — the screenshot, WebM recording, and `trace.zip` listed for it in `EVIDENCE-MANIFEST.json`. Never attach another case's evidence, unrelated Playwright output, or the whole evidence directory.
-- `workspaceRoot`: `{WORKSPACE-ROOT}`.
+**Evidence Attachment (done by the reporter; this agent verifies and repairs):**
+Every executed case's screenshot, recording, and trace are uploaded to its TestRail result during the run — `PASSED` included. Verify in `qa-evidence-summary.json`, and close any gap with:
 
-**Why passing cases are not an exception.** A `passed` result whose case history holds nothing is indistinguishable from a case that was never really run, and it is the one result type a reader cannot independently check. Attaching the screenshot, recording, and trace makes a green run auditable: someone can open the trace months later and see the assertion actually evaluated against the application. Do not skip an attachment because the case passed, because `VISIBILITY-MODE` is `STANDARD`, because the evidence looks uninteresting, or to keep the case history small.
+```
+node .github/scripts/qa-evidence/attach-evidence.cjs \
+     --summary {harness-dir}/test-results/qa-evidence-summary.json --retry-testrail
+```
 
-The single exception is a `NOT RUN` (`retest`) case, which executed nothing and therefore has nothing to attach; its reason belongs in the comment. If an executed case genuinely produced no artifacts, that is a harness misconfiguration to fix and report — not a case to record silently without evidence.
+It re-sends only what failed, records any case that never got a result, and rewrites the summary with the outcome. Re-running the suite to fix an upload is never the right move: it discards the evidence that already exists and produces a second set of results.
 
-Apply the same redaction check used for the evidence manifest before attaching: never upload a capture containing secrets, tokens, PII, or unrelated user data. When redaction removes a case's only artifact, record the result anyway and name the redaction gap in the comment and in Step 4's artifact.
+**Why passing cases are not an exception.** A `passed` result whose case history holds nothing is indistinguishable from a case that was never really run, and it is the one result type a reader cannot independently check. The screenshot, recording, and trace make a green run auditable: someone can open the trace months later and see the assertion actually evaluated against the application. This is why the reporter attaches to every executed case and why `VISIBILITY-MODE` never reduces it.
 
-If `TESTRAIL-RUN-ID` is `NONE`, absent, or not a positive integer, skip both the result and attachment calls entirely and rely on the local `QA-RESULTS` artifacts only. Never fail the overall execution because a single `RecordTestRailResult` or `AddTestRailResultAttachment` call errors — capture the error, continue executing remaining cases, and report the TestRail recording and attachment failures alongside the case they belong to in Step 4's artifact.
+A `NOT RUN` (`retest`) case executed nothing and has nothing to attach; its reason belongs in the comment. An executed case that reaches the summary with no attachments and no skips is a harness misconfiguration — check `screenshot`/`video`/`trace` are `'on'` — to fix and report, not to record silently.
+
+**Redaction.** The reporter uploads what the runner captured, so a capture that must not leave this machine has to be excluded before the run, not after: add `excludeCases: ['C123']` to the reporter options in the config. When that removes a case's only evidence, say so in Step 4's artifact rather than letting the gap read as a capture failure.
+
+If `TESTRAIL-RUN-ID` is `NONE`, absent, or not a positive integer, leave `TESTRAIL_RUN_ID` unset; the reporter disables itself, inventories the artifacts locally, and the run relies on the `QA-RESULTS` artifacts only. Never fail the overall execution because an upload failed — capture the error, finish the run, and report it against the case it belongs to in Step 4's artifact.
 
 ### Step 3.5: Recording Reconciliation (Hard Gate, before returning)
 
@@ -360,7 +378,7 @@ An instruction to record every case cannot verify itself. Close the loop against
    It prints `complete`, `counts`, `missing`, `statusConflicts`, and `evidenceGaps`, and exits non-zero when anything is missing, conflicting, **or unevidenced** — an executed case whose TestRail result holds no attachment fails this gate exactly as a missing result does. When Node cannot run it, compare `recorded_case_ids` against your classified case ids by hand under the same rules.
 3. **Record every case the diff reports as `missing`**, one call per case, then repeat steps 1 and 2. Allow at most three reconciliation passes.
 4. Resolve a `statusConflict` by re-recording that case with the status your own evidence supports, never by editing the local artifact to match TestRail.
-5. Close every `evidenceGap` by calling `drax-coder/AddTestRailResultAttachment` for that case's `result_id`. The script reports a gap for any executed case — `passed`, `failed`, or `blocked` — whose TestRail result holds no attachment, because an unevidenced result is unverifiable to a TestRail reader whatever its status. A gap the script reports for a case whose local evidence list is also empty is a capture failure, not an upload failure: say so explicitly in Step 4's artifact rather than closing it silently.
+5. Close every `evidenceGap` with `attach-evidence.cjs --retry-testrail`, then repeat steps 1 and 2. The script reports a gap for any executed case — `passed`, `failed`, or `blocked` — whose TestRail result holds no attachment, because an unevidenced result is unverifiable to a TestRail reader whatever its status. A gap for a case whose `qa-evidence-summary.json` entry also lists no attachments and no skips is a capture failure, not an upload failure: say so explicitly in Step 4's artifact rather than closing it silently.
 6. If any case is still unrecorded after the third pass, **say so explicitly in the return summary with the exact remaining case ids** and set `TESTRAIL RECONCILED` to `INCOMPLETE`. Never round the count up, never report your own tally of calls attempted in place of what the run actually holds, and never let the orchestrator infer completeness from silence.
 
 The number reported in Step 5 is the number the run confirms, not the number of calls this agent made. Those two figures diverging is the whole failure mode this gate exists to catch.
@@ -408,7 +426,7 @@ Omit `NOT RUN` cases from the JSON array; they carry no execution result to repo
 
 This `evidence` field is **local only**. Phase 4 strips it before calling `PublishQAReport`, because a workspace-relative path is unopenable for a Confluence reader; published evidence reaches people through the TestRail result attachment and the Jira defect instead. It stays in this file because the Step 3.5 reconciliation reads it.
 
-Generate statuses, durations, and failure details from the Playwright JSON reporter or existing framework result file. Do not manually transcribe successful durations, timestamps, or statuses from console output. Derive the Markdown report and evidence manifest from the same parsed result source so their counts cannot drift.
+Generate statuses, durations, and failure details from `qa-evidence-summary.json` (or the Playwright JSON reporter for a framework without the evidence reporter). Do not manually transcribe durations, timestamps, or statuses from console output. Derive the Markdown report and the results JSON from that same parsed source so their counts cannot drift from what TestRail holds.
 
 ### Step 5: Return Summary
 
@@ -430,9 +448,10 @@ REGRESSION SCOPE: {commands and result}
 EVIDENCE: {artifact directory}
 HUMAN-REQUIRED CASES: {IDs or None}
 RESULTS JSON: .agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.json
-TESTRAIL LIVE RECORDING: {count} of {count} cases recorded via RecordTestRailResult | SKIPPED (TESTRAIL-RUN-ID=NONE) | {N} recording failures (see artifact)
+TESTRAIL LIVE RECORDING: {count} of {count} cases recorded ({executed} by the evidence reporter, {notRun} via RecordTestRailResult) | SKIPPED (TESTRAIL-RUN-ID=NONE) | {N} recording failures (see artifact)
 TESTRAIL RECONCILED: COMPLETE ({recorded} of {inScope} confirmed in run {runId}) | INCOMPLETE (missing case ids: {ids}) | SKIPPED (TESTRAIL-RUN-ID=NONE)
-TESTRAIL EVIDENCE ATTACHED: {count} of {executed count, i.e. passed+failed+blocked} cases attached via AddTestRailResultAttachment | SKIPPED (TESTRAIL-RUN-ID=NONE) | {N} attachment failures (see artifact)
+TESTRAIL EVIDENCE ATTACHED: {count} of {executed count, i.e. passed+failed+blocked} cases attached by the evidence reporter | SKIPPED (TESTRAIL-RUN-ID=NONE) | {N} attachment failures (see artifact)
+EVIDENCE SUMMARY: {harness-dir}/test-results/qa-evidence-summary.json
 TESTRAIL RESULT IDS: {caseId}={resultId}, ...
 ```
 

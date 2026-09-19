@@ -41,7 +41,7 @@ Determine target directories based on `TARGET-LOCATION`:
 - **When `TARGET-LOCATION` is `REPO`**:
   - Check whether a repository-level Playwright setup exists (`playwright.config.ts` or `playwright.config.js`).
   - If absent, scaffold the starter test structure in the repository root:
-    - `playwright.config.ts` (configured with `trace: 'on'`, `screenshot: 'on'`, `video: 'on'`, HTML reporter, JSON reporter — evidence is captured for every case, passing ones included, because `sub-qa-execute` attaches evidence to every TestRail result)
+    - `playwright.config.ts` (configured with `trace: 'on'`, `screenshot: 'on'`, `video: 'on'`, HTML reporter, JSON reporter, and the TestRail evidence reporter below — evidence is captured for every case, passing ones included, because the reporter attaches evidence to every TestRail result)
     - `tsconfig.json` (if TypeScript configuration is needed)
     - `tests/` directory for test specs
     - `page-objects/` directory for Page Object classes
@@ -52,6 +52,25 @@ Determine target directories based on `TARGET-LOCATION`:
   - Target spec directory: `.agent-workspace/{ticket-lower}/playwright/tests/`.
   - Target page objects directory: `.agent-workspace/{ticket-lower}/playwright/page-objects/`.
   - Leave repository files untouched.
+
+### Step 1.5: Install the TestRail evidence reporter (Hard Gate)
+
+Copy `.github/scripts/qa-evidence/` into the harness directory beside `playwright.config.ts`, and register the reporter in that config:
+
+```ts
+reporter: [
+  ['html', { outputFolder: 'playwright-report', open: 'never' }],
+  ['json', { outputFile: 'test-results/report.json' }],
+  ['list'],
+  ['./qa-evidence/testrail-reporter.cjs', { runId: process.env.TESTRAIL_RUN_ID }],
+],
+```
+
+The reporter is what puts results and evidence into TestRail. It reads the `[C<id>]` in each test title, posts the result as the case finishes, and uploads that case's screenshot, recording, and trace from the paths the runner just wrote. A harness generated without it produces a run whose evidence nothing will ever attach, so treat a missing reporter exactly like a missing spec.
+
+Two things the generated spec must therefore get right, because the reporter depends on them:
+- **Every test title carries its `[C<id>]`.** A title without one cannot be routed to a case, and the reporter reports it as a problem rather than guessing.
+- **The config keeps `screenshot`, `video`, and `trace` at `'on'`.** `only-on-failure` and `on-first-retry` leave passing cases with nothing to attach.
 
 ### Step 2: Implement Page Objects & Resilient Locators
 

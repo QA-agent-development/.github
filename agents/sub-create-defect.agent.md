@@ -5,15 +5,15 @@ model:  Gemini 3.7 Flash (copilot)
 tools:
   - read/readFile
   - search/fileSearch
+  - execute/runInTerminal
   - drax-coder/GetTestRailRunResults
   - drax-coder/GetJiraIssue
   - drax-coder/CreateJiraBug
-  - drax-coder/AttachJiraEvidence
   - drax-coder/AddJiraComment
   - drax-coder/TransitionJiraIssue
   - drax-coder/RecordTestRailResult
 user-invocable: false
-argument-hint: "<JIRA-KEY> <CONFIRMED-DEFECTS> <QA-RESULTS-PATH> <EVIDENCE-MANIFEST-PATH> <TESTRAIL-CASES-PATH> <TESTRAIL-RUN-ID> <WORKSPACE-ROOT> <QA-CONFIG> [RETEST-MODE]"
+argument-hint: "<JIRA-KEY> <CONFIRMED-DEFECTS> <QA-RESULTS-PATH> <EVIDENCE-SUMMARY-PATH> <TESTRAIL-CASES-PATH> <TESTRAIL-RUN-ID> <WORKSPACE-ROOT> <QA-CONFIG> [RETEST-MODE]"
 ---
 
 # Sub-Agent: Create Defect
@@ -25,12 +25,12 @@ Single responsibility: turn every confirmed failed-case bug draft into an eviden
 1. `JIRA-KEY` - the source ticket key (e.g. `QAA-1`). Defects reference it; evidence is never attached to it.
 2. `CONFIRMED-DEFECTS` - every case the orchestrator found with status `failed` in `QA-RESULTS-PATH` and a matching `Bug Draft` subsection, as a list of `{caseId, draftPath}`. **Every one of these is filed — there is no further approval step.** An empty list is a valid input meaning "no failures were confirmed" — do nothing and report zero.
 3. `QA-RESULTS-PATH` - `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.json`, the authoritative status per case.
-4. `EVIDENCE-MANIFEST-PATH` - `.agent-workspace/{ticket-lower}/evidence/EVIDENCE-MANIFEST.json`; the only permitted source of evidence file paths.
+4. `EVIDENCE-SUMMARY-PATH` - `{harness-dir}/test-results/qa-evidence-summary.json`, written by the Playwright evidence reporter; the only permitted source of evidence file paths. Each case entry carries the absolute path and tracker-facing name of every artifact captured for it.
 5. `TESTRAIL-CASES-PATH` - `.agent-workspace/{ticket-lower}/TESTRAIL-CASES-{KEY}.json`, the full TestRail case data (title, `refs`, `custom_preconds`, `custom_steps`/`custom_steps_separated`, `custom_expected`). This, not the draft's prose, is the authoritative source for each case's steps, preconditions, and expected result when writing the Jira defect.
 6. `TESTRAIL-RUN-ID` - integer run id, or `NONE` when TestRail tracking is inactive.
-7. `WORKSPACE-ROOT` - absolute workspace root, required by the configured evidence-attachment tool to validate paths.
+7. `WORKSPACE-ROOT` - absolute workspace root, used to resolve the summary and script paths.
 8. `QA-CONFIG` - resolved client configuration. Two blocks matter here:
-   - **`defectManagement`** — the defect tracker contract. It supplies `provider`, the tool name for each operation (`createTool`, `lookupTool`, `commentTool`, `transitionTool`, `attachEvidenceTool`), `projectKey`, `issueType`, `labels`, `assignOnCreate`, and `transitions.reopen` / `transitions.verified`. **Never assume Jira and never hard-code a tool name — every tracker call in this agent is the tool named by this block.**
+   - **`defectManagement`** — the defect tracker contract. It supplies `provider`, the tool name for each operation (`createTool`, `lookupTool`, `commentTool`, `transitionTool`), `projectKey`, `issueType`, `labels`, `assignOnCreate`, and `transitions.reopen` / `transitions.verified`. **Never assume Jira and never hard-code a tool name — every tracker call in this agent is the tool named by this block.** Evidence attachment is the one exception: it runs locally through `attach-evidence.cjs`, because the artifacts exist only on the machine that ran the tests and a remote tool cannot read them.
    - **`bug`** — the report contract: `sectionOrder`, `severities`, `priorities`.
 9. `RETEST-MODE` - optional. `true` when this invocation follows a retest of previously filed defects.
 10. Merged skill rules and skill file paths from the orchestrator.
@@ -39,7 +39,7 @@ Single responsibility: turn every confirmed failed-case bug draft into an eviden
 
 ### Step 1: Load and Validate
 
-Read the skill files, `CONFIRMED-DEFECTS`, `QA-RESULTS-PATH`, `EVIDENCE-MANIFEST-PATH`, and `TESTRAIL-CASES-PATH`.
+Read the skill files, `CONFIRMED-DEFECTS`, `QA-RESULTS-PATH`, `EVIDENCE-SUMMARY-PATH`, and `TESTRAIL-CASES-PATH`.
 
 **Resolve the defect tracker from configuration first.** Read `QA-CONFIG.defectManagement` and bind every tracker operation to the tool it names:
 
@@ -49,7 +49,7 @@ Read the skill files, `CONFIRMED-DEFECTS`, `QA-RESULTS-PATH`, `EVIDENCE-MANIFEST
 | Create a defect | `drax-coder/{defectManagement.createTool}` |
 | Comment on a defect | `drax-coder/{defectManagement.commentTool}` |
 | Transition a defect | `drax-coder/{defectManagement.transitionTool}` |
-| Attach evidence | `drax-coder/{defectManagement.attachEvidenceTool}` |
+| Attach evidence | `node .github/scripts/qa-evidence/attach-evidence.cjs` (see Step 3) |
 
 - **If `provider` is `none`, create nothing.** Report every confirmed defect under `SKIPPED` with `reason=defectManagement.provider is none`, and return the Step 5 summary. This is a valid client configuration, not an error.
 - **If a configured tool is not available in this session, halt rather than substituting one.** Report the missing tool name and the provider it belongs to. Silently falling back to a different tracker's tool would write the defect to the wrong system.
@@ -64,11 +64,11 @@ Read the skill files, `CONFIRMED-DEFECTS`, `QA-RESULTS-PATH`, `EVIDENCE-MANIFEST
 For each confirmed defect, verify:
 - its `caseId` has status `failed` in `QA-RESULTS-{KEY}.json` — or, under `RETEST-MODE=true`, status `passed` with a live linked defect to verify. Any other combination is a contradiction: skip it and report the contradiction rather than filing a defect for a case that did not fail.
 - its draft file exists and is readable.
-- the evidence manifest lists an entry for that `caseId`.
+- the evidence summary lists an entry for that `caseId` with at least one attachment still on disk.
 
 If `CONFIRMED-DEFECTS` is empty, write nothing, create nothing, and return the Step 5 summary with zero counts. Every case in `CONFIRMED-DEFECTS` is filed automatically; never file a case that is not in this list, and never skip one that is in it because it looks minor or test-related — that judgment was already made by the `failed` status.
 
-**Missing evidence stops that defect; it never becomes an assumption.** If a draft's case has no manifest entry, or the manifest names files that do not exist, do **not** create or update a defect for it. Record it under `SKIPPED` with `reason=missing evidence` and the specific artifact that could not be resolved, so the orchestrator can raise it with the human. Never file a defect whose evidence cannot be produced, and never substitute evidence from a different run.
+**Missing evidence stops that defect; it never becomes an assumption.** If a draft's case has no entry in the evidence summary, or its files are no longer on disk, do **not** create or update a defect for it. Record it under `SKIPPED` with `reason=missing evidence` and the specific artifact that could not be resolved, so the orchestrator can raise it with the human. Never file a defect whose evidence cannot be produced, and never substitute evidence from a different run.
 
 **Never read application source to infer a root cause.** The TestRail case (from `TESTRAIL-CASES-PATH`), its requirement references, the bug draft, and the actual Playwright run output are the only permitted inputs. Diagnosing *why* the application behaved as it did is not this agent's job; recording *what* was observed is.
 
@@ -100,13 +100,21 @@ Call `drax-coder/{defectManagement.createTool}` once with:
 
 `issueType` must be the tracker's existing defect type from config — never invent a custom type. Do not claim a cross-browser, performance, accessibility, or security classification unless the failing evidence itself demonstrates it.
 
-Then call `drax-coder/{defectManagement.attachEvidenceTool}` with the returned issue key, **only that case's** allowlisted evidence paths from the manifest, and `WORKSPACE-ROOT`. Attach directly by default; when an artifact is rejected for exceeding the 25 MB limit, reference its workspace-relative path in the defect body instead and report it under `EVIDENCE ATTACHED` as linked-not-attached.
+Then attach that case's evidence to the returned issue key:
+
+```
+node .github/scripts/qa-evidence/attach-evidence.cjs      --summary {EVIDENCE-SUMMARY-PATH} --jira {issue-key} --case {caseId}
+```
+
+The script uploads **only that case's** artifacts, reading them from the machine the tests ran on, and records the result back into the summary. It sends the screenshot by default, which is the artifact a person opens in a defect; the recording and trace are already on the TestRail result, and the defect links to that case rather than carrying a second copy. Pass `--all` only when the defect genuinely needs the video or trace inline. It exits non-zero when an upload fails — report that under `EVIDENCE ATTACHED` rather than claiming the defect is evidenced.
+
+`--case` is mandatory: it is what stops one case's evidence landing on another case's defect.
 
 **For each TRACKED draft — update, never duplicate:**
 
 1. Do **not** call `{defectManagement.createTool}`.
 2. Call `drax-coder/{defectManagement.commentTool}` on the existing key with a dated retest comment: the run id, the repeat failure summary, expected vs actual, and the new evidence paths. **Append only** — never overwrite or delete a prior comment or prior evidence.
-3. Call `drax-coder/{defectManagement.attachEvidenceTool}` with the new run's evidence only.
+3. Attach the new run's evidence only, with `attach-evidence.cjs --summary {EVIDENCE-SUMMARY-PATH} --jira {issue-key} --case {caseId}` against the current run's summary.
 4. If the defect had been moved to a resolved/fixed state, call `drax-coder/{defectManagement.transitionTool}` with `{defectManagement.transitions.reopen}` so it reflects that it is still failing.
 5. Re-record the TestRail case ID and link in the updated defect, so the reference is refreshed on every retest update, not only at creation.
 6. Report it as **updated**, never as created. A single result produces either a creation or an update — never both.
@@ -117,8 +125,8 @@ Then call `drax-coder/{defectManagement.attachEvidenceTool}` with the returned i
 
 **Hard rules for every defect written:**
 - **Leave the assignee empty** whenever `{defectManagement.assignOnCreate}` is false, which is the default. Never select a default, fallback, or "most likely" user. Only an explicit `assignOnCreate: true` in client configuration permits an assignee, and even then never invent one.
-- Populate every field from `TESTRAIL-CASES-PATH`, the draft, the results JSON, and the evidence manifest only. Steps, preconditions, and expected result come verbatim from the normalized `TESTRAIL-CASES-PATH`, never from the draft's paraphrase of them and never from a tool's own re-fetch of TestRail. Never infer steps, environments, or failure reasons that the run did not produce.
-- Never send binary content or base64 through the model — the configured evidence-attachment tool reads files from the workspace directly.
+- Populate every field from `TESTRAIL-CASES-PATH`, the draft, the results JSON, and the evidence summary only. Steps, preconditions, and expected result come verbatim from the normalized `TESTRAIL-CASES-PATH`, never from the draft's paraphrase of them and never from a tool's own re-fetch of TestRail. Never infer steps, environments, or failure reasons that the run did not produce.
+- Never send binary content or base64 through the model, and never paste an artifact into a comment. The attachment script reads the files from disk and uploads them itself; the model only ever handles case ids and filenames.
 - Never attach evidence to `JIRA-KEY` (the source ticket) or to a different defect by inference.
 
 ### Step 4: Link Back to TestRail
