@@ -18,7 +18,7 @@ Single responsibility: reconcile approved TestRail cases and execution evidence 
 
 1. `TICKET-DATA` - structured Jira ticket data
 2. `QA-TEST-CASES-PATH` - approved test-case document
-3. `TESTRAIL-CASES-PATH` - `TESTRAIL-CASES-{KEY}.json`, the full TestRail case data (title, `refs`, `custom_preconds`, `custom_steps`/`custom_steps_separated`, `custom_expected`, `acceptance_criterion`) for every published case. This, not memory or the Playwright script, is the only source for a case's documented steps and expected result.
+3. `TESTRAIL-CASES-PATH` - `TESTRAIL-CASES-{KEY}.json`, the full TestRail case data (title, `refs`, `custom_preconds`, `custom_steps`/`custom_steps_separated`, `custom_expected`, `acceptance_criterion`) for every published case. This, not memory or the Playwright script, is the only source for a case's documented steps and expected result. `acceptance_criterion` is authoritative here even when TestRail's own UI shows no such field: the orchestrator backfills it from the approved `QA-TEST-CASES-{KEY}.json` when the TestRail project stores no criterion.
 4. `TESTRAIL-CASES` - published TestRail case IDs
 5. `QA-RESULTS-PATH` - QA execution artifact
 6. `TESTRAIL-RUN-ID` - optional TestRail run id where results were already recorded live via `RecordTestRailResult`, or `NONE`
@@ -39,7 +39,7 @@ Read the skill files and all inputs. Verify that every acceptance criterion and 
 - Every executed case MUST appear in exactly one criterion row. List any case that appears in none as an explicit **unmapped case**, and any appearing in several as a **duplicate mapping**.
 - The case counts across all criterion rows MUST sum to the executed-case total. State the arithmetic — `AC rows account for {n} of {total} executed cases` — and when it does not reconcile, say so in the report instead of publishing a table that silently drops a case.
 - A criterion's pass/fail tally MUST be computed from the cases mapped to it, not written by hand.
-- A case with an empty `acceptance_criterion` is a traceability gap: report it by ID under **Blocked or Missing Evidence**; never quietly omit it.
+- A case with an empty `acceptance_criterion` is a traceability gap that survived the orchestrator's backfill: report it by ID under **Blocked or Missing Evidence**; never quietly omit it, and never fill it in from the case title or your own reading of the criteria.
 
 ### Step 2: Assign Verdict
 

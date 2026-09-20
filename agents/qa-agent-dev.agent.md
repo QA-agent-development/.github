@@ -400,7 +400,6 @@ Immediately after explicit test-case approval, and before Phase 3 or any test ex
    - The agent MUST call `drax-coder/GetTestRailSectionCases` with `sectionId=TESTRAIL-SECTION-ID`.
    - Verify `success=true` and `total_cases > 0`.
    - The response contains the authoritative test cases created in TestRail, including their TestRail case IDs (`id` and `case_id`), titles (`title`), **the acceptance criterion each case covers (`acceptance_criterion`)**, preconditions (`custom_preconds`), steps (`custom_steps` / `custom_steps_separated`), expected results (`custom_expected`), and references (`refs`).
-   - **Check `cases_without_acceptance_criterion` in the response.** Any case ID listed there has no criterion stored in TestRail, so nothing downstream can place it in a coverage table — it would execute, produce a result, and silently belong to nothing. Halt and report those case IDs rather than proceeding; fix them with `drax-coder/UpdateTestRailCase` or by republishing before execution.
    - **Normalize the response before saving it (Rule 26).** TestRail returns each text field rendered to HTML, one `<p>` block per line with entities encoded, even though the cases were published as plain text. Save the response, then run:
 
      ```
@@ -410,6 +409,15 @@ Immediately after explicit test-case approval, and before Phase 3 or any test ex
 
      The first call unwraps the markup in place and reports how many fields it changed; the second exits non-zero if any tag or encoded entity remains. The script is idempotent, so re-running it is safe. When Node cannot run it, perform the same two mechanical operations by hand: turn each block tag into a line break and decode HTML entities (`&amp;` to `&`, `&lt;` to `<`, `&gt;` to `>`, `&quot;` to `"`, `&#39;` to `'`, `&nbsp;` to a space). Change nothing else. Report the normalized field count alongside the publication result.
    - Save the retrieved TestRail test cases to `.agent-workspace/{ticket-lower}/TESTRAIL-CASES-{KEY}.json`.
+   - **Backfill any missing acceptance criterion from the approved cases (do not halt).** `cases_without_acceptance_criterion` in the response lists every case whose criterion TestRail did not store — normal when the project has no custom field for it, or the field is not enabled for the case type. The criterion is a QA artifact, not a TestRail one: `.agent-workspace/{ticket-lower}/QA-TEST-CASES-{KEY}.json` already states per case which criterion it covers, and that file is what was published. Once the response is saved and normalized, join the two on title:
+
+     ```
+     node .github/scripts/backfill-acceptance-criteria.mjs .agent-workspace/{ticket-lower}/TESTRAIL-CASES-{KEY}.json .agent-workspace/{ticket-lower}/QA-TEST-CASES-{KEY}.json --write
+     node .github/scripts/backfill-acceptance-criteria.mjs .agent-workspace/{ticket-lower}/TESTRAIL-CASES-{KEY}.json --check
+     ```
+
+     The first call writes `acceptance_criterion` onto each TestRail case from the approved case of the same title, never overwriting a criterion TestRail did return; the second exits non-zero naming any case still without one. The script is idempotent. Report the backfilled count alongside the publication result, and state that the criteria live in `TESTRAIL-CASES-{KEY}.json` rather than in TestRail's own fields.
+   - **Only a case with no criterion in either source is a traceability gap.** If `--check` fails, those cases were published under a title that matches no approved case — halt and report those case IDs, and fix them by republishing or with `drax-coder/UpdateTestRailCase`. Never invent a criterion to fill the gap. Storing the criterion in TestRail is optional; every case carrying one in `TESTRAIL-CASES-{KEY}.json` is not.
    - Retain the path `.agent-workspace/{ticket-lower}/TESTRAIL-CASES-{KEY}.json` as `TESTRAIL-CASES-PATH`.
    - Retain the list of TestRail case IDs as `TESTRAIL-CASES`.
    - This ensures the test execution agents (`sub-qa-generate-tests` and `sub-qa-execute`) get and execute against the actual test cases created in TestRail.
