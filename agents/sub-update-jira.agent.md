@@ -1,7 +1,7 @@
 ---
 name: sub-update-jira
 description: Add a comment and/or transition a Jira ticket after work is completed
-model:  GPT-5 mini (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools:
   - drax-coder/GetJiraIssue
   - drax-coder/AddJiraComment

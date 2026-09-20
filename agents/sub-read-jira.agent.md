@@ -1,7 +1,7 @@
 ---
 name: sub-read-jira
 description: Fetch a Jira ticket and return structured data — summary, status, description, and acceptance criteria
-model:  GPT-5 mini (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools:
   - drax-coder/GetJiraIssue
   - drax-coder/RecordPrompt

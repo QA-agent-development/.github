@@ -1,7 +1,7 @@
 ---
 name: sub-qa-explore
 description: Optional read-only execution discovery for locating existing test paths and verified commands; not used for QA test-case design
-model:  GPT-5 mini (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools:
   - search/fileSearch
   - search/textSearch

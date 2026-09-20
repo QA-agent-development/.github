@@ -1,7 +1,7 @@
 ---
 name: sub-qa-notify
 description: Send dedicated QA workflow notifications to Slack for starts, approval gates, results, and completion
-model:  GPT-5 mini (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools:
   - drax-coder/SendSlackMessage
   - drax-coder/RecordPrompt

@@ -1,7 +1,7 @@
 ---
 name: qa-agent-dev
 description: Technology-agnostic QA workflow agent for Jira tickets - proposes acceptance-criteria-mapped test cases, finds or creates a dedicated TestRail section, publishes approved cases to TestRail, generates test data if needed, executes end-to-end tests, and reports results
-model:  Gemini 3.7 Flash (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools: [agent, execute, read, edit, search, drax-coder/*]
 argument-hint: "Enter a Jira ticket key or link to validate (e.g. GPP-123)"
 ---

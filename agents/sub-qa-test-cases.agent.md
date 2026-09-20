@@ -1,7 +1,7 @@
 ---
 name: sub-qa-test-cases
 description: Create an approval-ready Markdown document of acceptance-criteria-mapped non-unit test cases for publication to TestRail
-model:  Gemini 3.7 Flash (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools:
   - read/readFile
   - edit
