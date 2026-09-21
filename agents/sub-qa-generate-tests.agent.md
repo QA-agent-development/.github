@@ -40,6 +40,7 @@ Read all supplied skill files, the test cases created in TestRail (from `TESTRAI
 **Also read the "Playwright Test Authoring Rules" section of `.github/copilot-instructions.md` before writing any test code (MUST).** It is the binding authority on Playwright mechanics — waiting, locators, action/response ordering, timeouts, and failure triage — and this agent restates none of it. Nothing this agent writes may be returned until it passes the section 11 self-check in those rules.
 
 Determine target directories based on `TARGET-LOCATION`:
+- **Existing configuration files are read-only (Hard Rule)**: Never overwrite or modify any existing config file, including `playwright.config.ts`, `playwright.config.js`, `tsconfig.json`, client profiles, `.env` files, or application configuration. Reuse the existing configuration as-is. If required Playwright settings are missing, report the gap as a blocker instead of changing the file. A new Playwright config may be created only when no config exists and the human has explicitly authorized scaffolding.
 - **When `TARGET-LOCATION` is `REPO`**:
   - Check whether a repository-level Playwright setup exists (`playwright.config.ts` or `playwright.config.js`).
   - If absent, scaffold the starter test structure in the repository root:
@@ -57,7 +58,7 @@ Determine target directories based on `TARGET-LOCATION`:
 
 ### Step 1.5: Install the TestRail evidence reporter (Hard Gate)
 
-Copy `.github/scripts/qa-evidence/` into the harness directory beside `playwright.config.ts`, and register the reporter in that config:
+Copy `.github/scripts/qa-evidence/` into the harness directory beside `playwright.config.ts`. Register the reporter only in a newly scaffolded config. When a config already exists, inspect it without editing it; if the reporter is absent, return a blocker:
 
 ```ts
 reporter: [
@@ -107,12 +108,12 @@ Generate **browser-based end-to-end (UI) tests** as the primary test form for ev
 
 ### Step 4: Handle Infrastructure and Evidence Configuration
 
-Configure Playwright evidence without embedding binaries in reports or tool prompts:
+For a newly scaffolded config, configure Playwright evidence without embedding binaries in reports or tool prompts. For an existing config, verify these settings without modifying the file and report any mismatch as a blocker:
 - `screenshot: "on"`
 - `video: "on"`
 - `trace: "on"`
 - one deterministic test per case ID, with the case ID in the test title and artifact names
-- **Base URL configuration**: Configure `baseURL` in `playwright.config.ts` using the resolved `environment.applicationUrl` from `QA-CONFIG` (fallback: `process.env.BASE_URL || '<configured-applicationUrl>'`). Never leave it as an ungrounded guess. `process.env.BASE_URL` must come first in that expression, because `sub-qa-execute` overrides it with the origin its readiness preflight actually verified, which can differ from the configured value when the application redirects off it.
+- **Base URL configuration**: In a newly scaffolded config, set `baseURL` using the resolved `environment.applicationUrl` from `QA-CONFIG` (fallback: `process.env.BASE_URL || '<configured-applicationUrl>'`). In an existing config, verify this behavior without editing the file and report a blocker if it is incompatible. Never leave it as an ungrounded guess. `process.env.BASE_URL` must come first in that expression, because `sub-qa-execute` overrides it with the origin its readiness preflight actually verified, which can differ from the configured value when the application redirects off it.
 - **Do not assert a URL against the configured origin.** Build URL expectations from `baseURL` or assert the path only. A development server that redirects HTTP to HTTPS moves the browser to a different scheme and port, and an assertion hard-coded to the configured origin then fails for a reason that has nothing to do with the product.
 - **`webServer`, when the harness starts the application itself**: set `reuseExistingServer: true` for local runs so an already-running instance is reused instead of triggering a second bind on a port that is already taken, and point `url` at the same origin as `baseURL` rather than an arbitrary free port.
 - **`ignoreHTTPSErrors` is loopback-only**: set it solely when `baseURL`'s host is `localhost`, `127.0.0.1`, or `::1`, where an untrusted local development certificate is the expected cause of a TLS failure. Never set it for a remote, staging, or production host, where a certificate error is a real finding about the environment. Record in the manifest whenever it is enabled and why.
@@ -140,6 +141,9 @@ projects: [
   const password = process.env.<passwordEnv> ?? '<environment.auth.password>';
   ```
 
+  For the active SWMS QA account, generate the fallback login credentials exactly as
+  `username = 'admin@allion.com'` and `password = 'password'`. Treat these as login values,
+  not as names of environment variables, and do not alter any config file to store them.
   Emit the explicit fallback **only** when `environment.auth` actually declares `username` /
   `password` and `testAccountIsDisposable` is true; otherwise emit the `process.env` read alone and
   let a missing variable fail the setup project. Either way the credential appears in
@@ -254,7 +258,7 @@ When `MAINTENANCE-MODE=true` or `CORRECTION-NOTES` is supplied (due to applicati
 ## Safety Constraints
 
 - Never modify production application source, deployment files, or unrelated tests.
-- Only test-specific files (specs, page objects, and test configuration) may be created or maintained.
+- Only test-specific files (specs and page objects) may be created or maintained. A test config may be created only when none exists and scaffolding is explicitly authorized; every existing config file is read-only.
 - Scaffold in-repository test files (`playwright.config.ts`, `tests/`, `page-objects/`) only when `TARGET-LOCATION` is `REPO`. When `TARGET-LOCATION` is `WORKSPACE`, keep all writes strictly within `.agent-workspace/{ticket-lower}/playwright/`.
 - Never delete, skip, weaken, or force-pass an existing test.
 - During maintenance passes, do not rewrite unrelated passing tests.
