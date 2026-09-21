@@ -175,6 +175,15 @@ Top-level entry for codebase-aware quality validation. Owns Phases 0-4 and deleg
     - This is Rule 27 applied one level up: absent information stays absent. Rule 27 governs a parameter a tool left optional; this rule governs the request itself.
     - Ignoring an ambiguous request means performing no action, never withholding a reply. Say what blocked you.
 
+30. **The test account comes from `environment.auth`, explicitly, and is never invented (Hard Rule)** —
+    - When `environment.auth.required` is true, the Playwright login uses exactly the credentials the resolved client profile declares. Resolution order is fixed and has two sources, in this order:
+      1. `process.env[environment.auth.usernameEnv]` / `process.env[environment.auth.passwordEnv]` when those variables are set in the harness environment;
+      2. otherwise the explicit `environment.auth.username` / `environment.auth.password` values in the client profile.
+    - For the active `swms` profile those explicit values are `admin@allion.com` / `password`. Pass them through to the preflight and to `sub-qa-execute` verbatim; do not substitute a placeholder, do not prompt the human for a password, and do not halt for a missing credential while the profile declares one.
+    - **Never invent, guess, or "correct" a credential.** A login that fails with the declared account is a real finding about the environment or the account, reported as `ENVIRONMENT_NOT_READY` per Rule 25 — never a reason to try another email, another password, or a sign-up flow.
+    - **An explicit credential is permitted only for a disposable QA account on a non-public environment**, which `environment.auth.testAccountIsDisposable` must confirm. A profile pointing at production, or an account belonging to a real user, keeps its credentials in the environment variables and leaves `username`/`password` unset.
+    - **A resolved credential is still a credential.** Never print either value in a reply, a Jira or TestRail comment, a Slack message, a Confluence page, a defect, or any artifact; never write it into a generated spec (the setup project reads it at run time); and never enable trace, video, or screenshot on the Playwright `setup` project. Name the source (`environment.auth.username`, `QA_APP_USERNAME`), never the value.
+
 ## Pre-flight
 
 Run these steps at the start of every turn, in this exact order. **Do not skip any step. Do not parallelize. Do not proceed if any gate fails.**
@@ -492,11 +501,14 @@ Invoke `sub-qa-generate-tests` with:
 - `QA-CONFIG`: resolved client QA configuration containing `environment.applicationUrl` (e.g. `http://localhost:5000` or deployed test URL)
 - **`environment.auth`** when the application is behind a login wall, passed through verbatim.
   It declares `loginPath`, the locator expressions, `authenticatedPath`, `signedInLocator`,
-  `storageStatePath`, and the *names* of the environment variables holding the credentials
-  (`usernameEnv`, `passwordEnv`). **It never contains a username or password, and the
-  orchestrator never resolves those variables itself, never prints their values, and never
-  passes a credential into a worker prompt.** The worker reads them from its own environment at
-  execution time. When `environment.auth.required` is true, `sub-qa-execute` must establish and
+  `storageStatePath`, the *names* of the environment variables holding the credentials
+  (`usernameEnv`, `passwordEnv`), and — for a disposable QA account — the explicit
+  `username` / `password` the run falls back to when those variables are unset (Rule 30).
+  **Pass the block through verbatim, including the explicit values, so the worker signs in with
+  the declared account rather than asking for one. The orchestrator still never prints a
+  credential and never pastes one into a reply, a report, or any tracker artifact** — the worker
+  resolves the pair at execution time, environment variable first, explicit value second.
+  When `environment.auth.required` is true, `sub-qa-execute` must establish and
   prove an authenticated session in its Step 1.5 preflight before any case runs, and must halt
   the whole run with `ENVIRONMENT_NOT_READY` if it cannot — a missing test-account password
   blocks every case for one cause and is one halt, never N `blocked` results.

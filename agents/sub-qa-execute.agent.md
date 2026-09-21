@@ -165,6 +165,7 @@ deterministically:
 node .github/scripts/check-app-ready.mjs {applicationUrl} --modules-from {harness-dir} \
      --login-path {auth.loginPath} \
      --username-env {auth.usernameEnv} --password-env {auth.passwordEnv} \
+     --username "{auth.username}" --password "{auth.password}" \
      --username-locator "{auth.usernameLocator}" --password-locator "{auth.passwordLocator}" \
      --submit-locator "{auth.submitLocator}" --signed-in-locator "{auth.signedInLocator}" \
      --authenticated-path {auth.authenticatedPath} --storage-state {auth.storageStatePath}
@@ -177,10 +178,25 @@ POSIX-style shell on Windows rewrites a bare `/login` argument into a filesystem
 the script sees it. The script now names that specific failure (`mangled-path`) rather than
 reporting a broken application.
 
-**Credentials come only from the environment variables `environment.auth` names.** Never read a
-password out of the client config (it holds variable names, never values), never accept one in a
-prompt, never pass one as a command-line argument where it would land in shell history and the
-process list, and never write one into an artifact, a comment, or a TestRail result.
+**Use exactly the credentials `environment.auth` declares, in this order (Rule 30).** The script
+resolves `process.env[{auth.usernameEnv}]` / `process.env[{auth.passwordEnv}]` when those variables
+are set in the harness environment, and otherwise the explicit `environment.auth.username` /
+`environment.auth.password` from the client profile — for the active `swms` profile,
+`admin@allion.com` / `password`. Pass that explicit pair on the command line exactly as the profile
+spells it; omit the `--username`/`--password` arguments entirely when the profile declares no
+explicit values, so a genuinely missing credential still halts the run.
+
+**Never substitute a credential of your own.** Do not guess an email, do not retry with a different
+password, do not register an account, and do not ask the human for one while the profile declares a
+value — a login that fails with the declared account is an `ENVIRONMENT_NOT_READY` finding about the
+environment or the account, not an invitation to improvise.
+
+**A resolved credential still never leaves the run.** Never echo either value in `DIAGNOSIS`,
+`REMEDY`, a log line, an artifact, a comment, or a TestRail result; the script's output names the
+source it read (`env:QA_APP_USERNAME`, `config:environment.auth.username`), never the value, and so
+must you. An explicit credential is acceptable only because `environment.auth.testAccountIsDisposable`
+confirms a throwaway account on a non-public environment; if that flag is absent or false while
+explicit values are present, halt with `ENVIRONMENT_NOT_READY` and say so rather than signing in.
 
 **A failed or impossible login is a run-level halt, never a per-case result (Hard Rule).** It
 blocks every case for one cause, which is exactly the situation the environment rule below
@@ -284,7 +300,7 @@ On any test failure, consult diagnostic artifacts before proposing a root cause 
 1. Inspect the captured Playwright trace (`trace.zip`), JSON report, and failure console diffs to determine the exact failure line, locator expression, and received vs expected value.
 2. Classify the root cause:
    - `ENVIRONMENT`: browser, process, port, dependency, or readiness failure; repair the environment and rerun the smoke check.
-   - `HARNESS`: invalid selector, nonexistent generic fixture, or assertion that is stricter than the approved expected result; correct it only from runtime/repository evidence, record the correction, and rerun the failed case first.
+   - `HARNESS`: invalid selector, nonexistent generic fixture, or assertion that is stricter than the approved expected result; correct it only from runtime/repository evidence, record the correction, and rerun the failed case first. **A harness correction is never a sedative.** Adding a sleep, raising a timeout, adding `force: true`, wrapping the step in a retry loop, or broadening a locator until it matches are all forbidden responses to a timeout — follow the triage procedure in section 9 of the Playwright authoring rules in `.github/copilot-instructions.md`, which classifies the failure from Playwright's own message (not found / not visible / not stable / not enabled / intercepted) and gives the fix each one calls for. A timeout you have not diagnosed is not a `HARNESS` failure yet.
    - `PRODUCT`: the approved expected behavior is not observed; preserve the failure and evidence. Do not change the assertion to obtain a pass.
 3. Extract the first actionable failure reason (exact assertion diff, locator timeout, element not visible, navigation error) for inclusion in the report.
 

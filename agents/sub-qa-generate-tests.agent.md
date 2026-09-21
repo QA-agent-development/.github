@@ -37,6 +37,8 @@ Single responsibility: read the test cases created in TestRail and generate or m
 
 Read all supplied skill files, the test cases created in TestRail (from `TESTRAIL-CASES-PATH`, or fetch with `drax-coder/GetTestRailSectionCases` if `TESTRAIL-SECTION-ID` is provided), the TestRail publication result, and test data. Verify every approved case has a TestRail case ID before proceeding.
 
+**Also read the "Playwright Test Authoring Rules" section of `.github/copilot-instructions.md` before writing any test code (MUST).** It is the binding authority on Playwright mechanics — waiting, locators, action/response ordering, timeouts, and failure triage — and this agent restates none of it. Nothing this agent writes may be returned until it passes the section 11 self-check in those rules.
+
 Determine target directories based on `TARGET-LOCATION`:
 - **When `TARGET-LOCATION` is `REPO`**:
   - Check whether a repository-level Playwright setup exists (`playwright.config.ts` or `playwright.config.js`).
@@ -97,8 +99,7 @@ Create or modify only non-unit test files required by test cases created in Test
 - translate the TestRail steps (`custom_steps` or `custom_steps_separated`) into Page Object actions and assertions.
 - map directly to an `AUTHORITATIVE-AC` criterion.
 - test externally observable behavior rather than internal implementation details.
-- **Auto-Retrying Assertions**: Use Playwright's web-first assertions (e.g. `expect(locator).toBeVisible()`, `expect(locator).toHaveText(...)`, `expect(locator).toBeEnabled()`).
-- **Banned Anti-Patterns**: Never use arbitrary sleeps (`page.waitForTimeout`), manual polling loops, or fixed wait calls to await state. Use auto-retrying assertions or locator readiness states.
+- **Obey the "Playwright Test Authoring Rules" section of `.github/copilot-instructions.md` in full.** Every wait is a web-first assertion, `expect.poll`, `toPass`, or a `waitFor*` registered *before* the action that triggers it. `waitForTimeout`, `sleep`/`setTimeout`, `networkidle`, ElementHandle APIs (`page.$`, `page.$$`, `$eval`, `$$eval`), retry loops, and `force: true` are banned outright, and a value read with `textContent()`/`isVisible()`/`count()` is never what an assertion runs against. That file states the full ban list, the intent-to-API mapping, and the section 11 self-check this agent must pass before returning code; it is not duplicated here, so read it rather than working from this summary.
 - use deterministic, anonymized data from `TEST-DATA-PATH` when supplied; never use real customer records or PII.
 - fail for the intended product defect, not because of broken setup.
 
@@ -115,7 +116,7 @@ Configure Playwright evidence without embedding binaries in reports or tool prom
 - **Do not assert a URL against the configured origin.** Build URL expectations from `baseURL` or assert the path only. A development server that redirects HTTP to HTTPS moves the browser to a different scheme and port, and an assertion hard-coded to the configured origin then fails for a reason that has nothing to do with the product.
 - **`webServer`, when the harness starts the application itself**: set `reuseExistingServer: true` for local runs so an already-running instance is reused instead of triggering a second bind on a port that is already taken, and point `url` at the same origin as `baseURL` rather than an arbitrary free port.
 - **`ignoreHTTPSErrors` is loopback-only**: set it solely when `baseURL`'s host is `localhost`, `127.0.0.1`, or `::1`, where an untrusted local development certificate is the expected cause of a TLS failure. Never set it for a remote, staging, or production host, where a certificate error is a real finding about the environment. Record in the manifest whenever it is enabled and why.
-- deterministic preconditions; never hard-code credentials
+- deterministic preconditions; the only credential a spec may reference is the one `auth.setup.ts` resolves from `environment.auth` (Rule 30) — never a credential of your own invention, and never one repeated in a spec, page object, or fixture
 
 **Authenticated applications (`environment.auth.required: true` in `QA-CONFIG`).**
 When the application is behind a login wall, do not put a login into each spec. Scaffold a
@@ -131,9 +132,19 @@ projects: [
 ]
 ```
 
-- `auth.setup.ts` reads the credentials from `process.env[<usernameEnv>]` and
-  `process.env[<passwordEnv>]` named in `environment.auth` — **never** a literal, and never a
-  value read out of the config file, which holds only the variable names.
+- `auth.setup.ts` resolves the credentials at run time, environment variable first and the client
+  profile's explicit disposable-account value second (Rule 30):
+
+  ```ts
+  const username = process.env.<usernameEnv> ?? '<environment.auth.username>';
+  const password = process.env.<passwordEnv> ?? '<environment.auth.password>';
+  ```
+
+  Emit the explicit fallback **only** when `environment.auth` actually declares `username` /
+  `password` and `testAccountIsDisposable` is true; otherwise emit the `process.env` read alone and
+  let a missing variable fail the setup project. Either way the credential appears in
+  `auth.setup.ts` and nowhere else — **never** in a spec, a page object, a fixture, or the test
+  manifest — and it is never invented when the profile declares none.
 - Build the login page object from `environment.auth`'s `usernameLocator`, `passwordLocator`
   and `submitLocator` rather than inventing selectors, and assert `signedInLocator` on
   `authenticatedPath` before saving state, so a failed login fails the setup rather than
