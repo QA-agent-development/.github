@@ -64,7 +64,7 @@ Read the skill files, `CONFIRMED-DEFECTS`, `QA-RESULTS-PATH`, `EVIDENCE-SUMMARY-
 For each confirmed defect, verify:
 - its `caseId` has status `failed` in `QA-RESULTS-{KEY}.json` — or, under `RETEST-MODE=true`, status `passed` with a live linked defect to verify. Any other combination is a contradiction: skip it and report the contradiction rather than filing a defect for a case that did not fail.
 - its draft file exists and is readable.
-- the evidence summary lists an entry for that `caseId` with at least one attachment still on disk.
+- the evidence summary lists an entry for that `caseId` with at least one attachment still on disk. Note which of the three artifacts (screenshot, recording, trace) the entry holds: whatever is there is what must reach the defect, and anything missing from the summary is a capture failure to report, not a reason to attach less.
 
 If `CONFIRMED-DEFECTS` is empty, write nothing, create nothing, and return the Step 5 summary with zero counts. Every case in `CONFIRMED-DEFECTS` is filed automatically; never file a case that is not in this list, and never skip one that is in it because it looks minor or test-related — that judgment was already made by the `failed` status.
 
@@ -106,7 +106,7 @@ Then attach that case's evidence to the returned issue key:
 node .github/scripts/qa-evidence/attach-evidence.cjs      --summary {EVIDENCE-SUMMARY-PATH} --jira {issue-key} --case {caseId}
 ```
 
-The script uploads **only that case's** artifacts, reading them from the machine the tests ran on, and records the result back into the summary. It sends the screenshot by default, which is the artifact a person opens in a defect; the recording and trace are already on the TestRail result, and the defect links to that case rather than carrying a second copy. Pass `--all` only when the defect genuinely needs the video or trace inline. It exits non-zero when an upload fails — report that under `EVIDENCE ATTACHED` rather than claiming the defect is evidenced.
+The script uploads **only that case's** artifacts, reading them from the machine the tests ran on, and records the result back into the summary. **It sends every artifact the case captured — screenshot, recording (`.webm`), and trace (`.zip`) — and that is the required default for every defect.** A developer opening the defect must be able to watch the failure and open the trace without first finding the TestRail result. Never add `--screenshot-only`: it exists solely for a client whose configuration forbids video, and using it otherwise files a defect that cannot be reproduced from its own attachments. It exits non-zero when an upload fails — report that under `EVIDENCE ATTACHED` rather than claiming the defect is evidenced, and name the artifact that did not land.
 
 `--case` is mandatory: it is what stops one case's evidence landing on another case's defect.
 
@@ -114,7 +114,7 @@ The script uploads **only that case's** artifacts, reading them from the machine
 
 1. Do **not** call `{defectManagement.createTool}`.
 2. Call `drax-coder/{defectManagement.commentTool}` on the existing key with a dated retest comment: the run id, the repeat failure summary, expected vs actual, and the new evidence paths. **Append only** — never overwrite or delete a prior comment or prior evidence.
-3. Attach the new run's evidence only, with `attach-evidence.cjs --summary {EVIDENCE-SUMMARY-PATH} --jira {issue-key} --case {caseId}` against the current run's summary.
+3. Attach the new run's evidence only, with `attach-evidence.cjs --summary {EVIDENCE-SUMMARY-PATH} --jira {issue-key} --case {caseId}` against the current run's summary — the full set again (screenshot, recording, trace), so the retest's own reproduction sits beside the original.
 4. If the defect had been moved to a resolved/fixed state, call `drax-coder/{defectManagement.transitionTool}` with `{defectManagement.transitions.reopen}` so it reflects that it is still failing.
 5. Re-record the TestRail case ID and link in the updated defect, so the reference is refreshed on every retest update, not only at creation.
 6. Report it as **updated**, never as created. A single result produces either a creation or an update — never both.
@@ -152,7 +152,7 @@ CONFIRMED DEFECTS: {count}
 CREATED: {count} - {issue-key}={caseId}, ...
 UPDATED: {count} - {issue-key}={caseId}, ...
 SKIPPED: {count} - {caseId}: {reason}
-EVIDENCE ATTACHED: {count} of {count} defects - {failures if any}
+EVIDENCE ATTACHED: {count} of {count} defects - {per defect: files attached; any artifact that failed or was never captured}
 TESTRAIL LINKS RECORDED: {count} of {count} | SKIPPED (TESTRAIL-RUN-ID=NONE)
 CONFLICTS: {caseId with multiple live defects, or None}
 UNLINKED: {issue keys whose bidirectional link could not be confirmed, or None}
@@ -166,7 +166,7 @@ Confirm every one of these, and state any that fail:
 
 1. Every processed draft produced **either** a new defect **or** an update to its existing linked defect — never both, never neither without a `SKIPPED` reason.
 2. No defect was created or updated with an assignee.
-3. Every defect has its evidence attached (or explicitly recorded as linked-not-attached when oversized), drawn only from the run being processed.
+3. Every defect has its evidence attached (or explicitly recorded as linked-not-attached when oversized), drawn only from the run being processed — and that means every artifact the case captured, screenshot **and** recording **and** trace, not the screenshot alone.
 4. Every defect references its TestRail case, and every processed TestRail result references its Jira key — both directions verified, not assumed.
 5. No duplicate defect exists for any single tracked test case.
 6. Every retest outcome was reflected as a status change on the existing issue, not as a new issue.

@@ -4,9 +4,10 @@ Repository-wide context. Applies to every file.
 
 The Playwright authoring rules below are the single source for how test code is
 written in this repository — they are stated here and nowhere else, because two
-copies drift and the stale one is the one that gets followed. Anything else that
-is specific to one kind of file lives in `.github/instructions/*.instructions.md`
-and is applied by its `applyTo` glob.
+copies drift and the stale one is the one that gets followed. This repository
+carries no path-scoped `.github/instructions/*.instructions.md` files: this file
+is the whole of the repository-wide context, and the agent specs in
+`.github/agents/` are the rest.
 
 ## What is in this repository
 
@@ -14,10 +15,18 @@ and is applied by its `applyTo` glob.
 |---|---|
 | `.github/agents/` | The QA agent workflow: `qa-agent-dev.agent.md` orchestrates, `sub-*.agent.md` are its workers. These specs ARE the contract those agents run under. |
 | `.github/skills/` | Skill files. The orchestrator loads `test-design` only (Rule 17); the rest are superseded by the agent specs. |
-| `.github/instructions/` | Path-scoped instruction files, applied by `applyTo`. |
-| `.github/scripts/` | Workflow helpers — evidence attachment, TestRail case normalization and acceptance-criterion backfill, priority mapping. |
-| `EverydayGoods/` | ASP.NET MVC demo application (`AgentWorkflowDemo.csproj`) — the system under test. |
-| `Drax-Visibility-AI-new/mcp/` | The Python MCP server behind the `drax-coder/*` tools (Jira, TestRail, Slack, skills). |
+| `.github/client-config/` | Client profiles (`<client>.yaml`), `defaults.yaml`, and the `schema.json` they validate against. The active profile supplies the tracker, the environment, and the credentials contract. |
+| `.github/scripts/` | Workflow helpers — evidence attachment (`qa-evidence/`), TestRail case normalization and acceptance-criterion backfill, priority mapping, application readiness preflight. |
+| `.agent-workspace/<ticket>/` | Per-ticket working directory the run writes: normalized cases, results, the generated Playwright harness, and its `test-results/`. Not source. |
+
+**This repository contains no application source.** It is the QA harness only.
+The system under test runs elsewhere and is reached over HTTP at
+`environment.applicationUrl` in the active client profile, which is the only
+authority on it. Do not look for application source of any kind here, and never
+report its absence as a finding: there is nothing to find, and reading
+application source to explain a failure is forbidden anyway (`sub-create-defect`,
+Step 1). A run diagnoses the application through its own evidence — screenshot,
+recording, trace — not through its code.
 
 ## Editing the agent workflow
 
