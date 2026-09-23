@@ -353,7 +353,7 @@ For every case the run never reached, call `drax-coder/RecordTestRailResult` whe
 - `runId`: `{TESTRAIL-RUN-ID}`
 - `caseId`: the case's TestRail numeric id (from `id` in `TESTRAIL-CASES-PATH`)
 - `status`: `retest` for `NOT RUN`, `blocked` for a case that is individually untestable in a working environment.
-- `comment`: the concrete reason, prefixed `NOT RUN — ` where it applies.
+- `comment`: the concrete reason, prefixed `NOT RUN — ` where it applies. **Write the reason that applies to this case, not one boilerplate line pasted across every unreached case.** "NOT RUN — Playwright installation declined by human" is the same fact for all of them and may legitimately repeat across *different* cases; what must never repeat is a second identical comment on the *same* case. Before recording, check whether this case already holds a result saying the same thing — if it does, it is already recorded, and a duplicate entry only makes the history harder to read.
 - `elapsed`: omit — nothing ran.
 - `defects`: `[]` — the orchestrator links defects in Phase 4 after Jira bug creation.
 

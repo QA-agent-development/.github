@@ -135,7 +135,7 @@ For every defect created or updated, when `TESTRAIL-RUN-ID` is a positive intege
 - `runId`: `{TESTRAIL-RUN-ID}`
 - `caseId`: that case's TestRail id
 - `status`: `failed` (unchanged — linking a defect is not a re-classification)
-- `comment`: `Linked Jira defect {issue-key}`
+- `comment`: the linkage and only the linkage — `{Created|Updated} Jira defect {issue-key} for this failure: {one-line failure summary}` (add `— reopened` when Step 3 reopened a resolved defect). **Never repeat what the execution result already recorded on this case, and never post this comment twice.** The case history is read top to bottom, so a second identical `Linked Jira defect ...` line adds nothing and buries the entry that did change something. If this case already carries a result linking this same defect key, the link exists — report it as already linked rather than recording it again.
 - `defects`: `[{issue-key}]`
 
 Confirm the link resolves in both directions before reporting completion: the Jira defect names the TestRail case, and the TestRail result names the Jira key. If either direction fails, report it as an unlinked defect rather than claiming success.
