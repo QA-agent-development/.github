@@ -310,7 +310,8 @@ flowchart TD
   REPORT_GATE -->|retest| CLOSE_OLD_RUN[CloseTestRailRun on superseded run]
   CLOSE_OLD_RUN --> CREATE_RUN
    REPORT_GATE -->|accept| BUGS[sub-create-defect: auto-file every failed case with a Bug Draft - lookup, CreateJiraBug/update, attach-evidence.cjs, RecordTestRailResult defects link]
-   BUGS --> UPDATE[sub-update-jira]
+   BUGS --> PUBLISH[drax-coder/PublishQAReport - publishes the Confluence report page and returns its URL]
+   PUBLISH --> UPDATE[sub-update-jira - carries the Confluence URL into the ticket comment]
    UPDATE --> CLOSE_RUN[drax-coder/CloseTestRailRun]
    CLOSE_RUN --> COMPLETE[sub-qa-notify QA_WORKFLOW_COMPLETE]
 ```
@@ -645,7 +646,9 @@ Require `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md` to exist and be no
    - If the backfill closes the gap, say so explicitly with the before and after ratio, clear `RECORDING-GAP`, and continue.
    - If any case still has no result, keep `RECORDING-GAP` populated and carry it into steps 9, 10, 11 and 12. Do not silently proceed as though the run were complete.
 
-9. Call `drax-coder/PublishQAReport` directly (not via a worker) with `sourceIssueKey={JIRA-KEY}`, `testResults` read from `QA-RESULTS-{KEY}.json`, `defects` built only from bugs actually created in step 6 (`key`, `summary`, `status`, `url`), and `environment` from the verified Phase 3 execution results.
+9. **Publish the Confluence report. This step is mandatory on every accepted report and is never skipped, deferred, or folded into another step.** Call `drax-coder/PublishQAReport` directly (not via a worker) with `sourceIssueKey={JIRA-KEY}`, `testResults` read from `QA-RESULTS-{KEY}.json`, `defects` built only from bugs actually created in step 6 (`key`, `summary`, `status`, `url`), and `environment` from the verified Phase 3 execution results.
+   - **An absent or empty `CONFLUENCE-CONFIG` is not a reason to skip this call.** The space comes from the server's `X-Confluence-Space` header, not from the workspace, so the tool works with no `integrations.confluence` block present at all; that block only supplies the optional `parentPageId` and makes the target reviewable. A client that genuinely must not publish says so through `testManagement`/`defectManagement`-style configuration, never through a missing block.
+   - **Retain the returned page URL as `CONFLUENCE-URL`**, or, if the call fails after the 404 retry below, retain the tool's verbatim error as `CONFLUENCE-ERROR`. Steps 10, 11 and 12 all require one of the two to exist.
    - **Reduce each `testResults` object to `test_case_id`, `title`, and `status`. Drop `evidence` and `duration` before sending.** The published Test Results table is exactly **Test Case ID | Scenario | Status**. A workspace-relative path is unopenable for anyone reading Confluence, so evidence belongs where it can actually be opened: attached to the TestRail result by the evidence reporter, and to the Jira defect by `attach-evidence.cjs`. Duration is runner trivia that crowds out the three columns a reader scans. Keep both in the local `QA-RESULTS-{KEY}.json`, which is where the reconciliation check reads them from; just do not publish them.
    - **`test_case_id` is required on every result.** It is the first column, and a row without it reads as an untraceable scenario. `938`, `"938"`, and `"C938"` are all accepted and render as `C938`. The tool also strips the redundant `[C938] ` prefix from the title, so send the title as it stands rather than hand-editing it. Never fabricate a defect or result entry that step 6 or Phase 3 did not produce.
 
@@ -656,14 +659,30 @@ Require `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md` to exist and be no
 
    If publication still fails, report the error and continue — Confluence publication failure does not block Jira update. **Report the tool's own error text verbatim and never re-interpret it.** In particular, never describe a failure as a space or permission restriction when the response carries `"authorized": true`, which states that the credentials were accepted and the cause lies in the request rather than in access.
 
-10. Invoke `sub-update-jira` with a concise result summary (including the AUTHORITATIVE-AC validation results), report path, created bug links, `TESTRAIL-RUN-URL` so the human can open the live run directly, and the Confluence report URL when published. Do not transition the ticket unless the human explicitly requested a transition.
+10. Invoke `sub-update-jira` with a concise result summary (including the AUTHORITATIVE-AC validation results), report path, created bug links, `TESTRAIL-RUN-URL` so the human can open the live run directly, and `CONFLUENCE-URL` from step 9. Do not transition the ticket unless the human explicitly requested a transition.
+    - **This step cannot run before step 9.** Its input includes `CONFLUENCE-URL`, or `CONFLUENCE-ERROR` when publication failed. If you hold neither, step 9 has not been performed — go back and perform it before invoking this worker. Never invoke `sub-update-jira` with the Confluence line silently omitted.
     - **When `RECORDING-GAP` is non-empty, the comment MUST state it** (Rule 28): the confirmed ratio, the missing case ids, and that those cases were executed locally but have no result in the run. A comment that reports only the pass count while cases are unrecorded overstates what was verified and is the exact failure this rule exists to prevent. Never describe an unrecorded case as passed.
 
 11. **Close the TestRail run (Rules 22, 23 and 28)**: call `drax-coder/CloseTestRailRun(runId=TESTRAIL-RUN-ID)`. Skip when `TESTRAIL-RUN-ID` is `NONE`. Report the closure result.
+    - **Publication gate before closing.** Closing is irreversible and it is the step that ends the workflow, so it is where a skipped artifact stops being recoverable. **Do not close the run until step 9 has actually been called** and produced either `CONFLUENCE-URL` or `CONFLUENCE-ERROR`. If neither exists, step 9 was skipped: perform it now, then close. Reaching this step with no record of a `PublishQAReport` call is the failure this gate exists to catch.
     - **Completeness gate before closing (Rule 28).** Closing is irreversible, so it must never run on unverified data. When `RECORDING-GAP` is still non-empty after step 8b's backfill attempt, **do not close the run.** Leave it open, state the missing case ids, invoke `sub-qa-notify` with `ACTION=AWAITING_RECORDING_GAP` presenting the ratio and the ids, call `drax-coder/RecordPrompt`, and end the turn so the human chooses whether to re-execute the missing cases or accept the gap. An open run with a named gap is recoverable; a closed run with 7 silent blanks is not.
     - **This closure is not optional and not limited to the success path.** If the workflow halts, errors, or is declined at any point after the run was created — execution failure, worker error, human `stop`, or budget refusal — close the run before ending the turn and say so in the halt message. The only exception is a halt at an active human gate this workflow will resume from (`AWAITING_TOOL_INSTALL_APPROVAL`, `AWAITING_ENVIRONMENT_READY`, `AWAITING_RECORDING_GAP`, `AWAITING_QA_REPORT_APPROVAL`), where execution is still in progress and the run stays open.
 
 12. Invoke `sub-qa-notify` with `ACTION=QA_WORKFLOW_COMPLETE` and the final verdict. **When `RECORDING-GAP` is non-empty, include the confirmed ratio and the missing case ids in `EXTRA-DETAILS`** (Rule 28), and never describe the run as complete. A notification that says "9 passed, 1 failed" while 7 cases hold no result misreports the run to everyone reading the channel.
+
+### Phase 4 Checkpoint (before reporting the phase complete)
+
+Phase 4 produces five artifacts. Name each one with the identifier the tool returned, and **never report Phase 4 as complete while any line cannot be filled in from an actual tool response**:
+
+| # | Artifact | Evidence it exists |
+|---|---|---|
+| 1 | Defects filed | the `DEFECTS` summary's created/updated keys from step 6 |
+| 2 | **Confluence report page** | **`CONFLUENCE-URL` returned by `PublishQAReport` in step 9, or `CONFLUENCE-ERROR` verbatim** |
+| 3 | Jira ticket comment | the comment id or confirmation `sub-update-jira` returned in step 10 — a worker that returned a *draft* has not posted it |
+| 4 | TestRail run closed | the `CloseTestRailRun` response from step 11 |
+| 5 | Completion notification | the `sub-qa-notify` result from step 12 |
+
+A summary that lists four of five and omits the fifth is the failure this checkpoint exists to catch: the missing artifact reads as "not applicable" to a human skimming it, when in fact the step never ran. **An artifact you did not produce is reported as missing, with the reason — never by leaving its line out.**
 
 ## Defect Retest Mode (Mode B)
 
