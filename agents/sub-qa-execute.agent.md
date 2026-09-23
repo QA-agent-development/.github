@@ -1,7 +1,7 @@
 ---
 name: sub-qa-execute
 description: Execute approved QA test cases, request approval for missing browser tooling, and capture reproducible evidence
-model:  Claude Haiku 4.5 (copilot)
+model:  Claude Sonnet 5 (copilot)
 tools:
   - read/readFile
   - edit
