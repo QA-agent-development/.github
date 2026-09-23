@@ -1,7 +1,7 @@
 ---
 name: qa-agent-dev
 description: Technology-agnostic QA workflow agent for Jira tickets - proposes acceptance-criteria-mapped test cases, finds or creates a dedicated TestRail section, publishes approved cases to TestRail, generates test data if needed, executes end-to-end tests, and reports results
-model:  Claude Sonnet 5 (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools: [agent, execute, read, edit, search, drax-coder/*]
 argument-hint: "Enter a Jira ticket key or link to validate (e.g. GPP-123)"
 ---
@@ -118,7 +118,9 @@ Top-level entry for codebase-aware quality validation. Owns Phases 0-4 and deleg
     - All test titles, TestRail IDs (`[C{id}]`), steps, and expected results executed by `sub-qa-execute` must be bound directly to the test cases created in TestRail.
 22. **Live TestRail Tracking is a Hard Rule (results MUST be recorded into TestRail as execution happens, not only in local artifacts)** —
     - Immediately before invoking `sub-qa-execute` in Phase 3 (after the Tooling Permission Gate resolves), the orchestrator MUST call `drax-coder/CreateTestRailRun` with `name="[{JIRA-KEY}] Execution run {timestamp}"`, `caseIds={TESTRAIL-CASES}` (the resolved TestRail case IDs), `description` per Rule 23, and retain the returned integer as `TESTRAIL-RUN-ID`. Skip this call only when `config.testManagement.provider` is `local-only` or `none`.
-    - `TESTRAIL-RUN-ID` MUST be passed to `sub-qa-execute`, which MUST call `drax-coder/RecordTestRailResult` for **every** case it classifies (`PASSED`→`passed`, `FAILED`→`failed`, `BLOCKED`→`blocked`, `NOT RUN`→`retest`) immediately after that case finishes — never batched only at the end and never skipped.
+    - `TESTRAIL-RUN-ID` MUST be passed to `sub-qa-execute` and set as `TESTRAIL_RUN_ID` in the runner environment, because **the evidence reporter in the harness is what records an executed case** — it posts that case's result the moment its test finishes and uploads its evidence to it. Recording is therefore live and per-case by construction, never batched at the end.
+    - **`sub-qa-execute` records only what the reporter could not: the cases the run never reached** (`NOT RUN`→`retest`, and a case individually untestable in a working environment→`blocked`). It never re-records a case that already appears in `qa-evidence-summary.json`. **A case whose result the reporter already posted must not receive a second result from the agent** — that is one execution described twice, and it is the most common way this workflow has produced duplicate TestRail comments (Rule 32).
+    - Every case in the run still ends with exactly one result: the reporter's for everything executed, the agent's for everything not. A case with none is a recording gap for Step 3.5 to close, never a reason to post a duplicate.
     - **No case in the run may be left untested and unexplained.** A `NOT RUN` case is recorded as `retest` with a comment naming the concrete reason, because a case with no result at all is indistinguishable from one the agent forgot. Never record a `NOT RUN` case as `passed` or `blocked` to make a run look complete.
     - Each `RecordTestRailResult` call's `comment` MUST summarize the actionable outcome (expected vs actual, evidence file paths, command used) so the TestRail case history is a faithful live mirror of `QA-RESULTS-{KEY}.md`.
     - **Never post the same comment twice on a case. Every result a case receives carries a comment that says why *this* result exists and what changed since the one before it.** A case legitimately receives several results — the live record as the test finishes, a worst-status correction, the defect link in Phase 4, an evidence retry, a retest — and each is a separate entry in a history a human reads top to bottom. Repeating identical text turns that history into noise and hides the one entry that actually changed something.
@@ -130,7 +132,7 @@ Top-level entry for codebase-aware quality validation. Owns Phases 0-4 and deleg
     - **A green result is the one that most needs its evidence.** A `passed` case whose TestRail history holds nothing is indistinguishable from a case that was never run, and it is the only status no reader can independently check. Never accept a worker's passing result set with no attachments on the grounds that nothing failed, and never let `VISIBILITY-MODE` be used as a reason to capture less: the mode governs headed playback and HTML-report retention, never the per-case evidence set. Playwright must run with `screenshot`, `video`, and `trace` all set to `on` in every mode.
     - **The Step 3.5 reconciliation now fails on an unevidenced executed case, not only a missing one.** `reconcile-testrail-run.mjs` reports an `evidenceGap` for any `passed`/`failed`/`blocked` result with no attachment and exits non-zero, distinguishing an `upload` gap (local files exist, attachment never landed) from a `capture` gap (nothing was captured at all — a harness misconfiguration to fix, never a case to record unevidenced). Treat a returned `TESTRAIL EVIDENCE ATTACHED` count below the executed-case count exactly as you treat an `INCOMPLETE` recording.
     - Local `QA-RESULTS-{KEY}.md` / `QA-RESULTS-{KEY}.json` remain the source parsed for reporting, but they are a mirror of what was already recorded into TestRail, never a substitute for it.
-    - In Phase 4, once a Jira defect is created for a failed case (step 6), the orchestrator MUST call `drax-coder/RecordTestRailResult` again for that case's `TESTRAIL-RUN-ID` with the same `failed` status and `defects=[{new-issue-key}]` so the TestRail case reflects its linked defect. **That result's comment states the linkage and nothing the execution result already said** — the defect key, whether it was created or updated, and the failure it was filed for. Never re-post the execution comment alongside the defect link, and never record this result a second time for a defect already linked to that case.
+    - In Phase 4, the defect link reaches TestRail through **`sub-create-defect` only** (its Step 4), which records one result per defect it created or updated, carrying `defects=[{issue-key}]` and a comment that states the linkage and nothing the execution result already said. **The orchestrator does not record that result itself — it verifies the worker did, from the `TESTRAIL LINKS RECORDED` count (Phase 4 step 8a).** One fact has one writer: when both the worker and the orchestrator record the link, the case ends up with two results saying the same thing, which is the duplicate-comment failure Rule 32 exists to prevent. If the worker reports a case under `UNLINKED`, report it as a traceability gap — do not silently write the result yourself to paper over it.
     - After Phase 4 completes (Jira update and notify), the orchestrator MUST call `drax-coder/CloseTestRailRun(runId=TESTRAIL-RUN-ID)` to close the run. Skip when no run was created.
 
 23. **TestRail Run Lifecycle: one open run at a time, never orphaned (Hard Rule)** —
@@ -196,6 +198,24 @@ Top-level entry for codebase-aware quality validation. Owns Phases 0-4 and deleg
     - **Never infer that publication is not configured.** The space comes from the server's `X-Confluence-Space` header, so the call works with no `integrations.confluence` block in the workspace at all. An absent block, an empty `parentPageId`, and a `CONFLUENCE-CONFIG` you could not resolve are each **not** grounds to skip — only `parentPageId` comes from configuration, and it is optional (Rule 27).
     - **Retain `CONFLUENCE-URL`, or the tool's verbatim error as `CONFLUENCE-ERROR`.** Steps 10, 11 and 12 all consume one of the two: the Jira comment carries the URL, the run is not closed until one exists, and the completion summary names it. If you reach `CloseTestRailRun` holding neither, step 9 was skipped — perform it before closing.
     - **Publication failure is reported, never silently absorbed, and never blocks the Jira update.** Report the tool's own error text verbatim; never re-describe a `404` naming the parent as a space or permission problem when the response carries `"authorized": true`.
+
+32. **Every TestRail write carries a new comment; a comment is never repeated on a case (Hard Rule)** —
+    - **Each `RecordTestRailResult` call writes a comment that has not appeared on that case before.** A case accumulates results — the live execution record, a worst-status correction, the defect link, an evidence retry, a retest — and TestRail renders them as a history a human reads top to bottom. A repeated line makes that history unreadable and hides the entry that actually changed something.
+    - **Before writing, know what the case already holds.** `GetTestRailRunResults` returns the existing results for the run. If the comment you are about to send matches one already there, you are about to record a fact TestRail already has: do not send it. **Nothing new to say means nothing to record** — a result is not an acknowledgement.
+    - **State what this particular write is for**, in its own words: first execution result; status corrected from `{old}` to `{new}` and why; defect `{key}` created or updated for this failure; evidence re-uploaded after a failed attempt; retest of `{defect-key}` and its outcome. Name the run id.
+    - **Cosmetic variation is not a new comment.** A timestamp, a counter, a run id, a serial number, or the same sentence reworded is the same comment with decoration, and it satisfies nothing. The difference has to be a different *fact*.
+    - **One fact, one writer.** Every duplicate this workflow has produced came from two participants recording the same fact, not from one participant repeating itself. Each fact has exactly one owner:
+
+      | Fact | Sole writer | Everyone else |
+      |---|---|---|
+      | An executed case's result and evidence | the harness evidence reporter, live as each test finishes | never records it again |
+      | A case the run never reached (`retest`/`blocked`) | `sub-qa-execute`, Step 4 | never records it again |
+      | A missing result discovered by reconciliation | `sub-qa-execute`, Step 3.5 — and the orchestrator's step 8b only for what a fresh `GetTestRailRunResults` still shows missing | never records it again |
+      | The Jira defect link (`defects=[…]`) | `sub-create-defect`, Step 4 | the orchestrator **verifies** via `TESTRAIL LINKS RECORDED` |
+      | A retest outcome | `sub-defect-retest` | never records it again |
+
+    - **Before writing a result, confirm this step owns that fact.** If the table gives it to someone else, your job is to verify their work and report a gap — never to write it yourself "to be safe". A second write is not a safety net; it is the defect.
+    - This binds every writer of a TestRail result in this workflow — the orchestrator, `sub-qa-execute`, `sub-create-defect`, `sub-defect-retest`, and every retry path.
 
 ## Pre-flight
 
@@ -578,7 +598,7 @@ Retain the returned `run_id` as `TESTRAIL-RUN-ID` and the returned `url` as `TES
 Invoke `sub-qa-execute` with:
 - `TESTRAIL-CASES-PATH`: `.agent-workspace/{ticket-lower}/TESTRAIL-CASES-{KEY}.json` containing the authoritative test cases created in TestRail (and fallback `.agent-workspace/{ticket-lower}/QA-TEST-CASES-{KEY}.md`)
 - `TESTRAIL-SECTION-ID`: `{TESTRAIL-SECTION-ID}` (for direct lookup via GetTestRailSectionCases if needed)
-- `TESTRAIL-RUN-ID`: `{TESTRAIL-RUN-ID}` (or `NONE`) — used to record each case's live result via `drax-coder/RecordTestRailResult` as execution progresses
+- `TESTRAIL-RUN-ID`: `{TESTRAIL-RUN-ID}` (or `NONE`) — set as `TESTRAIL_RUN_ID` in the runner environment so the harness's evidence reporter records each executed case's result and evidence as its test finishes. The worker itself records only the cases the run never reached (Rule 22); it never re-records one the reporter already posted
 - `WORKSPACE-ROOT`: the absolute workspace root — used to resolve harness, summary, and script paths
 - `TESTRAIL-CASES`
 - the approved `QA-TEST-CASES-{KEY}.md` path (as reference)
@@ -657,7 +677,9 @@ Require `.agent-workspace/{ticket-lower}/QA-RESULTS-{KEY}.md` to exist and be no
 
 8b. **Recording Gap Gate (Rule 28)**: read `TESTRAIL TRACEABILITY` and `TESTRAIL GAPS` from `sub-qa-report`'s summary. When the confirmed count is below the executed count:
    - Retain the missing case ids as `RECORDING-GAP`.
-   - **Attempt a backfill first**: for each missing case, call `drax-coder/RecordTestRailResult` with the status and comment that case carries in `QA-RESULTS-{KEY}.json`, then re-run `drax-coder/GetTestRailRunResults` to confirm. Backfilling a result the run is missing is restoring a record, not inventing one, because the status comes from the executed result the worker already produced.
+   - **Re-read the run before writing anything.** `sub-qa-report`'s counts were taken before `sub-qa-execute`'s own Step 3.5 reconciliation finished its passes, so a case it lists as missing may already have been recorded since. Call `drax-coder/GetTestRailRunResults` now and narrow `RECORDING-GAP` to the cases that are *still* missing. **Backfilling a case that already has a result is a dual write, and it produces exactly the duplicate this rule and Rule 32 exist to prevent.**
+   - **Then backfill only what is still missing**: for each such case, call `drax-coder/RecordTestRailResult` with the status and comment that case carries in `QA-RESULTS-{KEY}.json`, and a comment that says it is a backfill of a result the run never received. Re-run `drax-coder/GetTestRailRunResults` to confirm. Backfilling a result the run is missing is restoring a record, not inventing one, because the status comes from the executed result the worker already produced.
+   - If `RECORDING-GAP` is empty after the re-read, there is nothing to backfill: say so and continue. Never write a result to confirm one that already exists.
    - If the backfill closes the gap, say so explicitly with the before and after ratio, clear `RECORDING-GAP`, and continue.
    - If any case still has no result, keep `RECORDING-GAP` populated and carry it into steps 9, 10, 11 and 12. Do not silently proceed as though the run were complete.
 

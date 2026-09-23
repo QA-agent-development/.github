@@ -1,7 +1,7 @@
 ---
 name: sub-qa-report
 description: Convert QA execution evidence into an auditable QA report
-model:  Claude Sonnet 5 (copilot)
+model:  Claude Haiku 4.5 (copilot)
 tools:
   - read/readFile
   - edit
