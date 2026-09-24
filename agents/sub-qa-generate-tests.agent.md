@@ -1,7 +1,7 @@
 ---
 name: sub-qa-generate-tests
 description: Generate approved non-unit tests from a TestRail-published test-case document using repository conventions
-model:  Claude Haiku 4.5 (copilot)
+model:  Claude Sonnet 5 (copilot)
 tools:
   - read/readFile
   - edit

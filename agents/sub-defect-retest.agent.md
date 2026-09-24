@@ -1,7 +1,7 @@
 ---
 name: sub-defect-retest
 description: Re-run only the tests linked to a given Jira defect, record the outcome in TestRail, and update the defect with the verified result
-model:  Claude Haiku 4.5 (copilot)
+model:   Claude Sonnet 5 (copilot)
 tools:
   - read/readFile
   - search/fileSearch
