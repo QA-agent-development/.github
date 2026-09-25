@@ -8,10 +8,10 @@ tools:
   - search/codebase
   - search/textSearch
   - search/fileSearch
-  - open_browser_page
-  - navigate_page
-  - read_page
-  - run_playwright_code
+  - browser/openBrowserPage
+  - browser/navigatePage
+  - browser/readPage
+  - browser/runPlaywrightCode
   - drax-coder/GetTestRailSectionCases
   - drax-coder/UpdateTestRailCase
 user-invocable: false
