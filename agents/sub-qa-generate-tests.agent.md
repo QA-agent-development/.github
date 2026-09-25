@@ -8,6 +8,10 @@ tools:
   - search/codebase
   - search/textSearch
   - search/fileSearch
+  - open_browser_page
+  - navigate_page
+  - read_page
+  - run_playwright_code
   - drax-coder/GetTestRailSectionCases
   - drax-coder/UpdateTestRailCase
 user-invocable: false
@@ -88,7 +92,7 @@ To ensure long-term maintainability and prevent duplicated interaction logic, te
   4. `getByTestId` (e.g. `getByTestId('cart-item')`)
   5. CSS or XPath selectors **only as an absolute last resort** when no accessible role, label, text, or test-id is viable.
 - **Treat the TestRail case text as plain text**: `TESTRAIL-CASES-PATH` is normalized at ingestion (orchestrator Rule 26). If a step or expected result still carries an HTML tag or an encoded entity such as `&amp;`, do not copy it into a locator, a URL, or an assertion literal, because an encoded entity would make the spec assert the wrong string. Flag it in the manifest instead.
-- **Discovering a locator against the running app**: `npx playwright codegen <url>` records real user actions and reports the locators Playwright would use. Prefer it over guessing when the markup is unclear, and still record the source you confirmed each locator against.
+- **Discover locators against the running app (Hard Rule)**: Use the browser tools against `environment.applicationUrl` and authenticate with the supplied `environment.auth` contract when required. Observe the rendered accessibility tree and interaction results directly; repository source is supporting evidence, not a substitute for runtime observation. Never recommend that the human run `npx playwright codegen` in place of this worker's own discovery.
 - **Never invent selectors or routes**: Extract every locator and navigation target from real application evidence in this repository — view/component templates, routing/controller source, or existing tests — never from assumption or convention (e.g. never assume a feature lives at `/`; find the actual route in the controller/router source). If a referenced element or flow cannot be found, flag it in the manifest instead of guessing.
 - **Resolve `dataAssumptions` before writing a value into a spec**: When a TestRail case (or its `QA-TEST-CASES-{KEY}.json` source) carries a `dataAssumptions` entry, its example values (search terms, category/filter names, counts, IDs, etc.) are illustrative placeholders, not verified facts. Search the repository for the real reference/seed data that backs that scenario (fixture files, seed data services, constants, enums) and substitute a real value found there. Never copy a `dataAssumptions`-flagged value into a spec unchanged.
 
@@ -178,16 +182,17 @@ Do not execute tests; test execution belongs exclusively to `sub-qa-execute`.
 
 ### Step 4.5: Ground-Truth Verification (Hard Gate)
 
-Before a spec or page object can be considered finished, every navigation target, locator, and literal data value it contains must be traced to real evidence found by reading the repository — never left as an assumption carried over from the TestRail case text. This agent has no browser or network access, so "real evidence" means the actual source, not a live request. When `CODEBASE-SUMMARY` is supplied, read it first — it may already name the relevant routes, test frameworks, and conventions — but treat it as a starting point, not proof: verify anything it covers against the actual source file it names before relying on it.
+Before writing a spec or page object, verify every navigation target, locator, user-visible string, semantic role, and literal data value against the configured live application. Use `open_browser_page` and `run_playwright_code` to navigate `environment.applicationUrl`, complete authentication from `environment.auth` when required, exercise the relevant flow without submitting destructive changes, and inspect the rendered accessibility semantics. Repository source and `CODEBASE-SUMMARY` are supporting evidence for routes, seed data, and implementation context; they do not override what the browser actually renders.
 
 For each page object and spec produced or modified this pass, confirm and record:
-- **Route**: the `goto()`/navigation target matches a path found in the application's routing, controller, or page source — not the site root by default and not a guess.
-- **Locators**: every role, label, text, or test-id used was read verbatim from the real view/component/template source (or an existing, still-current page object). A locator with no corresponding element found in that source is not written; the element or flow is flagged instead.
-- **Data values**: every literal used in a fixture, action, or assertion (search terms, category/filter names, expected counts, IDs) is either sourced from `TEST-DATA-PATH`, or cross-checked against real seed/reference data found in the codebase (a seed data service, fixture file, constants/enum) when the TestRail case flagged it under `dataAssumptions`. An unresolved `dataAssumptions` value is never written into a spec unchanged.
+- **Route**: direct browser navigation reached the path and rendered the feature after any required authentication or redirect.
+- **Locators and semantics**: each role, accessible name, label, button text, dialog role, table role, row/cell structure, and state text used by the test was observed in the rendered page. Record the observed locator expression or accessibility evidence.
+- **Visible outcomes**: each asserted validation message, heading, status, and column name was observed verbatim by safely driving the relevant UI state. Do not infer copy from the ticket or source when runtime behavior can be observed.
+- **Data values**: every literal used in a fixture, action, or assertion is sourced from `TEST-DATA-PATH`, observed in the live application, or cross-checked against real seed/reference data. An unresolved `dataAssumptions` value is never written into a spec unchanged.
 
-If a route, element, or data value cannot be located anywhere in the repository, do not guess or fall back to the TestRail case's illustrative wording — write the test against the closest verified behavior available and flag the gap under `Limitations and Open Questions`, naming the specific case, the missing evidence, and what was assumed instead.
+If the configured application cannot be reached or authenticated, a required flow cannot be opened safely, or any route, locator, semantic role, visible outcome, or required data value remains unobserved, return `STATUS: GROUND_TRUTH_BLOCKED`. Name the affected cases and missing observations in the manifest, but do not write guessed specs or page objects and do not call `UpdateTestRailCase` for them. Never write a test against the "closest" behavior and never offer codegen as a substitute for worker-owned verification.
 
-This check is mandatory and cannot be skipped by moving straight to execution — its outcome must be recorded in the `## Ground-Truth Verification` section of the manifest (Step 6) before this agent returns.
+This check is mandatory and cannot be waived by the Generated Tests Gate. A successful return requires zero unresolved executable details in the `## Ground-Truth Verification` section.
 
 ### Step 5: Write the Automation Reference Back to TestRail
 
@@ -217,9 +222,9 @@ Write `.agent-workspace/{ticket-lower}/QA-TESTS-{KEY}.md`:
 ## TestRail Case Mapping
 ## Test Cases
 ## Ground-Truth Verification
-| Case | Route Source | Locators Source | Data Values Source | Unresolved (flagged) |
-|---|---|---|---|---|
-| C123 | `Controllers/CatalogController.cs` | `Views/Catalog/Index.cshtml` | `Services/InMemoryProductCatalog.cs` | None |
+| Case | Live Route Observation | Live Locator / Semantic Observation | Visible Outcomes | Data Values Source | Unresolved |
+|---|---|---|---|---|---|
+| C123 | `/catalog` rendered after navigation | `getByRole('heading', { name: 'Catalog' })` observed | Empty-state text observed verbatim | `Services/InMemoryProductCatalog.cs` | None |
 ## Test-Only Infrastructure Changes
 ## Playwright Evidence Configuration
 ## Verified Execution Commands
@@ -241,7 +246,7 @@ TESTS GENERATED: {count}
 AC COVERAGE: {covered}/{total}
 TEST COMMANDS: {verified commands}
 PRODUCTION FILES MODIFIED: None
-GROUND-TRUTH VERIFICATION: {count} of {count} cases fully verified against repository evidence | {N} cases flagged unresolved (see manifest)
+GROUND-TRUTH VERIFICATION: {count} of {count} cases fully verified against the live application | 0 unresolved executable details
 FLAGGED ISSUES: {list or None}
 ```
 
@@ -262,7 +267,7 @@ When `MAINTENANCE-MODE=true` or `CORRECTION-NOTES` is supplied (due to applicati
 - Scaffold in-repository test files (`playwright.config.ts`, `tests/`, `page-objects/`) only when `TARGET-LOCATION` is `REPO`. When `TARGET-LOCATION` is `WORKSPACE`, keep all writes strictly within `.agent-workspace/{ticket-lower}/playwright/`.
 - Never delete, skip, weaken, or force-pass an existing test.
 - During maintenance passes, do not rewrite unrelated passing tests.
-- Never make live external calls or use real credentials, PII, or sensitive records.
+- Limit live browser discovery to the configured `environment.applicationUrl`; use only the declared disposable QA account and synthetic data, and never expose credentials, PII, or sensitive records in artifacts.
 - Never add a framework based on familiarity rather than approved repository evidence.
 - Never create or modify unit tests or unit-test project configuration.
 - Do not run git commands or call another subagent.
