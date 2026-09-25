@@ -8,6 +8,7 @@ tools:
   - search/codebase
   - search/textSearch
   - search/fileSearch
+  - execute/runInTerminal
   - browser/openBrowserPage
   - browser/navigatePage
   - browser/readPage
@@ -15,7 +16,7 @@ tools:
   - drax-coder/GetTestRailSectionCases
   - drax-coder/UpdateTestRailCase
 user-invocable: false
-argument-hint: "<TICKET-DATA> <TESTRAIL-CASES-PATH|QA-TEST-CASES-PATH> <TESTRAIL-CASES> [TEST-DATA-PATH] [TARGET-LOCATION] [CORRECTION-NOTES] [MAINTENANCE-MODE]"
+argument-hint: "<TICKET-DATA> <TESTRAIL-CASES-PATH|QA-TEST-CASES-PATH> <TESTRAIL-CASES> [TEST-DATA-PATH] [TARGET-LOCATION] [PERMISSION-GRANTED] [CORRECTION-NOTES] [MAINTENANCE-MODE]"
 ---
 
 # Sub-Agent: Generate QA Tests
@@ -33,13 +34,41 @@ Single responsibility: read the test cases created in TestRail and generate or m
 7. `CORRECTION-NOTES` - optional human feedback or defect fix details for targeted test maintenance
 8. `MAINTENANCE-MODE` - optional boolean (`true` when updating tests following application UI/flow changes or retests)
 9. `CODEBASE-SUMMARY` - optional inline text (not a file) returned by `sub-qa-explore`, when the orchestrator ran it this pass. A head start for Step 4.5's Ground-Truth Verification — read it first, but still confirm directly against the repository for anything it does not cover, since this agent is the one accountable for what ends up in the spec.
-10. Merged skill rules and skill file paths from the orchestrator
+10. `PERMISSION-GRANTED` - optional tooling decision: `INSTALL-PLAYWRIGHT=true`, `INSTALL-PLAYWRIGHT=false`, or `NONE`
+11. Merged skill rules and skill file paths from the orchestrator
 
 ## Workflow
 
 ### Step 1: Verify Environment & Scaffold Test Structure
 
 Read all supplied skill files, the test cases created in TestRail (from `TESTRAIL-CASES-PATH`, or fetch with `drax-coder/GetTestRailSectionCases` if `TESTRAIL-SECTION-ID` is provided), the TestRail publication result, and test data. Verify every approved case has a TestRail case ID before proceeding.
+
+### Step 1.1: Ensure Browser Discovery Tooling (Resumable Human Gate)
+
+Use the extension browser tools when they are actually available to this invocation. Do not mention `tool_search`, ask the human to configure an MCP server, or return `GROUND_TRUTH_BLOCKED` merely because those extension tools are unavailable. This worker also has `execute/runInTerminal`; its supported fallback is the local `@playwright/test` Chromium API in the target harness.
+
+Before Ground-Truth Verification, check the target directory for both requirements:
+1. `node -e "require.resolve('@playwright/test')"` succeeds.
+2. A Node smoke script imports `chromium`, prints `chromium.executablePath()`, launches Chromium headlessly, and closes it successfully.
+
+An existing package plus a successful launch is verified tooling. Retain the executable path internally and continue without asking permission. A path string alone is insufficient: launch must succeed.
+
+If either the package or Chromium binary is missing:
+- When `PERMISSION-GRANTED=INSTALL-PLAYWRIGHT=true`, install idempotently in the target directory: require `node`, `npm`, and `npx`; run `npm init --yes` only when `package.json` is absent; install `@playwright/test` only when `require.resolve` fails; then run `npx playwright install chromium` on Windows/macOS or `npx playwright install --with-deps chromium` on supported Linux. Repeat the executable-path and launch smoke check once. Continue directly to live discovery only after it succeeds; do not ask for another approval.
+- When `PERMISSION-GRANTED=INSTALL-PLAYWRIGHT=false`, return `STATUS: TOOL_INSTALL_DECLINED` and stop without generating specs.
+- When permission is `NONE` or absent, return exactly this resumable gate and stop without generating specs or a manifest:
+
+```text
+QA TEST GENERATION PAUSED
+=========================
+STATUS: AWAITING_TOOL_INSTALL_APPROVAL
+TOOL: @playwright/test and Chromium
+REASON: Live locator discovery requires a verified Playwright Chromium executable before tests can be generated.
+QUESTION: Playwright Chromium is required but is not installed or cannot launch. Do you give permission to install @playwright/test and Chromium, verify the browser executable path, then continue generating the approved tests? (Yes/No)
+RESUME-WITH: PERMISSION-GRANTED=INSTALL-PLAYWRIGHT=true
+```
+
+The orchestrator owns the human conversation. Never claim this worker asked the human directly. A concrete installation or launch failure after approval is `STATUS: TOOLING_BLOCKED` with the failed command and sanitized error; it is not `GROUND_TRUTH_BLOCKED` and must not be misreported as missing application evidence.
 
 **Also read the "Playwright Test Authoring Rules" section of `.github/copilot-instructions.md` before writing any test code (MUST).** It is the binding authority on Playwright mechanics — waiting, locators, action/response ordering, timeouts, and failure triage — and this agent restates none of it. Nothing this agent writes may be returned until it passes the section 11 self-check in those rules.
 
@@ -92,7 +121,7 @@ To ensure long-term maintainability and prevent duplicated interaction logic, te
   4. `getByTestId` (e.g. `getByTestId('cart-item')`)
   5. CSS or XPath selectors **only as an absolute last resort** when no accessible role, label, text, or test-id is viable.
 - **Treat the TestRail case text as plain text**: `TESTRAIL-CASES-PATH` is normalized at ingestion (orchestrator Rule 26). If a step or expected result still carries an HTML tag or an encoded entity such as `&amp;`, do not copy it into a locator, a URL, or an assertion literal, because an encoded entity would make the spec assert the wrong string. Flag it in the manifest instead.
-- **Discover locators against the running app (Hard Rule)**: Use the browser tools against `environment.applicationUrl` and authenticate with the supplied `environment.auth` contract when required. Observe the rendered accessibility tree and interaction results directly; repository source is supporting evidence, not a substitute for runtime observation. Never recommend that the human run `npx playwright codegen` in place of this worker's own discovery.
+- **Discover locators against the running app (Hard Rule)**: Use the available extension browser tools or bounded terminal scripts using the verified local `@playwright/test` Chromium API against `environment.applicationUrl`, and authenticate with the supplied `environment.auth` contract when required. Observe rendered accessibility semantics and interaction results directly; repository source is supporting evidence, not a substitute for runtime observation. Never recommend that the human configure an MCP server or run `npx playwright codegen` in place of this worker's own discovery.
 - **Never invent operational selectors or routes**: Every locator used to navigate, establish readiness, read a precondition, or perform an action must be observed in the authenticated live application. Repository source may corroborate it but cannot replace the live observation. A locator used only for the approved expected result may instead be derived verbatim from `custom_expected` or `expectedResult`; label it `REQUIREMENT-DERIVED`, never claim it was observed, and never use it to perform an action.
 - **Resolve `dataAssumptions` before writing a value into a spec**: When a TestRail case (or its `QA-TEST-CASES-{KEY}.json` source) carries a `dataAssumptions` entry, its example values (search terms, category/filter names, counts, IDs, etc.) are illustrative placeholders, not verified facts. Search the repository for the real reference/seed data that backs that scenario (fixture files, seed data services, constants, enums) and substitute a real value found there. Never copy a `dataAssumptions`-flagged value into a spec unchanged.
 
@@ -187,7 +216,7 @@ Do not execute tests; test execution belongs exclusively to `sub-qa-execute`.
 
 ### Step 4.5: Ground-Truth Verification (Hard Gate)
 
-Before writing a spec or page object, verify every operational navigation target, locator, semantic role, and literal test-data value against the configured live application. Use `open_browser_page` and `run_playwright_code` to navigate `environment.applicationUrl`, complete authentication from `environment.auth` when required, exercise the relevant flow without submitting destructive changes, and inspect the rendered accessibility semantics. Repository source and `CODEBASE-SUMMARY` are supporting evidence; they do not override what the browser actually renders. Expected-result assertions are the deliberate exception: an assertion may target behavior not currently rendered only when its value and semantics come verbatim from the approved TestRail expected result.
+Before writing a spec or page object, verify every operational navigation target, locator, semantic role, and literal test-data value against the configured live application. Use `open_browser_page` and `run_playwright_code` when available; otherwise run bounded Node scripts through `execute/runInTerminal` using the verified local `@playwright/test` Chromium API. Navigate `environment.applicationUrl`, complete authentication from `environment.auth` when required, exercise the relevant flow without submitting destructive changes, and inspect rendered accessibility semantics. Repository source and `CODEBASE-SUMMARY` are supporting evidence; they do not override what the browser actually renders. Expected-result assertions are the deliberate exception: an assertion may target behavior not currently rendered only when its value and semantics come verbatim from the approved TestRail expected result.
 
 For each page object and spec produced or modified this pass, confirm and record:
 - **Route**: direct browser navigation reached the path and rendered the feature after any required authentication or redirect. Record the final URL and prove the configured `signedInLocator` is present before treating feature markup as observed; a redirect to the login path is `GROUND_TRUTH_BLOCKED`, not verification of the target route.
