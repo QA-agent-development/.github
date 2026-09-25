@@ -93,7 +93,7 @@ To ensure long-term maintainability and prevent duplicated interaction logic, te
   5. CSS or XPath selectors **only as an absolute last resort** when no accessible role, label, text, or test-id is viable.
 - **Treat the TestRail case text as plain text**: `TESTRAIL-CASES-PATH` is normalized at ingestion (orchestrator Rule 26). If a step or expected result still carries an HTML tag or an encoded entity such as `&amp;`, do not copy it into a locator, a URL, or an assertion literal, because an encoded entity would make the spec assert the wrong string. Flag it in the manifest instead.
 - **Discover locators against the running app (Hard Rule)**: Use the browser tools against `environment.applicationUrl` and authenticate with the supplied `environment.auth` contract when required. Observe the rendered accessibility tree and interaction results directly; repository source is supporting evidence, not a substitute for runtime observation. Never recommend that the human run `npx playwright codegen` in place of this worker's own discovery.
-- **Never invent selectors or routes**: Extract every locator and navigation target from real application evidence in this repository — view/component templates, routing/controller source, or existing tests — never from assumption or convention (e.g. never assume a feature lives at `/`; find the actual route in the controller/router source). If a referenced element or flow cannot be found, flag it in the manifest instead of guessing.
+- **Never invent operational selectors or routes**: Every locator used to navigate, establish readiness, read a precondition, or perform an action must be observed in the authenticated live application. Repository source may corroborate it but cannot replace the live observation. A locator used only for the approved expected result may instead be derived verbatim from `custom_expected` or `expectedResult`; label it `REQUIREMENT-DERIVED`, never claim it was observed, and never use it to perform an action.
 - **Resolve `dataAssumptions` before writing a value into a spec**: When a TestRail case (or its `QA-TEST-CASES-{KEY}.json` source) carries a `dataAssumptions` entry, its example values (search terms, category/filter names, counts, IDs, etc.) are illustrative placeholders, not verified facts. Search the repository for the real reference/seed data that backs that scenario (fixture files, seed data services, constants, enums) and substitute a real value found there. Never copy a `dataAssumptions`-flagged value into a spec unchanged.
 
 ### Step 3: Generate Approved Coverage with Auto-Retrying Assertions
@@ -104,6 +104,11 @@ Create or modify only non-unit test files required by test cases created in Test
 - translate the TestRail steps (`custom_steps` or `custom_steps_separated`) into Page Object actions and assertions.
 - map directly to an `AUTHORITATIVE-AC` criterion.
 - test externally observable behavior rather than internal implementation details.
+- classify every locator and assertion in the manifest by provenance:
+  - `LIVE-OPERATIONAL`: observed live and used for route readiness, preconditions, reads, or actions.
+  - `REQUIREMENT-DERIVED`: used only to assert the exact approved expected result; the required UI may currently be absent.
+  - `LIVE-OUTCOME`: an approved expected result that was also observed live.
+- never add a proxy assertion, incidental heading, or substitute behavior merely because the approved expected result is missing. When the approved result is absent, assert the earliest directly observable requirement that is missing and stop that case there; do not invent downstream interactions.
 - **Obey the "Playwright Test Authoring Rules" section of `.github/copilot-instructions.md` in full.** Every wait is a web-first assertion, `expect.poll`, `toPass`, or a `waitFor*` registered *before* the action that triggers it. `waitForTimeout`, `sleep`/`setTimeout`, `networkidle`, ElementHandle APIs (`page.$`, `page.$$`, `$eval`, `$$eval`), retry loops, and `force: true` are banned outright, and a value read with `textContent()`/`isVisible()`/`count()` is never what an assertion runs against. That file states the full ban list, the intent-to-API mapping, and the section 11 self-check this agent must pass before returning code; it is not duplicated here, so read it rather than working from this summary.
 - use deterministic, anonymized data from `TEST-DATA-PATH` when supplied; never use real customer records or PII.
 - fail for the intended product defect, not because of broken setup.
@@ -182,17 +187,18 @@ Do not execute tests; test execution belongs exclusively to `sub-qa-execute`.
 
 ### Step 4.5: Ground-Truth Verification (Hard Gate)
 
-Before writing a spec or page object, verify every navigation target, locator, user-visible string, semantic role, and literal data value against the configured live application. Use `open_browser_page` and `run_playwright_code` to navigate `environment.applicationUrl`, complete authentication from `environment.auth` when required, exercise the relevant flow without submitting destructive changes, and inspect the rendered accessibility semantics. Repository source and `CODEBASE-SUMMARY` are supporting evidence for routes, seed data, and implementation context; they do not override what the browser actually renders.
+Before writing a spec or page object, verify every operational navigation target, locator, semantic role, and literal test-data value against the configured live application. Use `open_browser_page` and `run_playwright_code` to navigate `environment.applicationUrl`, complete authentication from `environment.auth` when required, exercise the relevant flow without submitting destructive changes, and inspect the rendered accessibility semantics. Repository source and `CODEBASE-SUMMARY` are supporting evidence; they do not override what the browser actually renders. Expected-result assertions are the deliberate exception: an assertion may target behavior not currently rendered only when its value and semantics come verbatim from the approved TestRail expected result.
 
 For each page object and spec produced or modified this pass, confirm and record:
-- **Route**: direct browser navigation reached the path and rendered the feature after any required authentication or redirect.
-- **Locators and semantics**: each role, accessible name, label, button text, dialog role, table role, row/cell structure, and state text used by the test was observed in the rendered page. Record the observed locator expression or accessibility evidence.
-- **Visible outcomes**: each asserted validation message, heading, status, and column name was observed verbatim by safely driving the relevant UI state. Do not infer copy from the ticket or source when runtime behavior can be observed.
+- **Route**: direct browser navigation reached the path and rendered the feature after any required authentication or redirect. Record the final URL and prove the configured `signedInLocator` is present before treating feature markup as observed; a redirect to the login path is `GROUND_TRUTH_BLOCKED`, not verification of the target route.
+- **Operational locators and semantics**: each role, accessible name, label, button text, dialog role, table role, row/cell structure, and state text used for navigation, readiness, reads, or actions was observed in the rendered page. Record the observed locator expression or accessibility evidence.
+- **Readiness assertions**: every generated heading or other page-loaded assertion was observed exactly in the authenticated live page and appears in the Ground-Truth Verification row. Do not add an incidental heading assertion when a verified feature control or URL state proves readiness more directly.
+- **Expected-result assertions**: trace each assertion to the exact `custom_expected`/`expectedResult` text. Record whether it was `LIVE-OUTCOME` or `REQUIREMENT-DERIVED`. A currently absent validation message, heading, table, status, or column remains a valid requirement assertion, but it is never reported as live-observed ground truth.
 - **Data values**: every literal used in a fixture, action, or assertion is sourced from `TEST-DATA-PATH`, observed in the live application, or cross-checked against real seed/reference data. An unresolved `dataAssumptions` value is never written into a spec unchanged.
 
-If the configured application cannot be reached or authenticated, a required flow cannot be opened safely, or any route, locator, semantic role, visible outcome, or required data value remains unobserved, return `STATUS: GROUND_TRUTH_BLOCKED`. Name the affected cases and missing observations in the manifest, but do not write guessed specs or page objects and do not call `UpdateTestRailCase` for them. Never write a test against the "closest" behavior and never offer codegen as a substitute for worker-owned verification.
+Return `STATUS: GROUND_TRUTH_BLOCKED` when the configured application cannot be reached or authenticated, an operational route/locator/precondition cannot be observed, required test data is unresolved, or an assertion has no exact approved expected-result source. Name the affected cases and missing evidence in the manifest, but do not write guessed specs or page objects and do not call `UpdateTestRailCase` for them. Do not block merely because approved expected behavior is currently absent: generate the earliest requirement-derived assertion that demonstrates that absence, without inventing later actions or proxy checks.
 
-This check is mandatory and cannot be waived by the Generated Tests Gate. A successful return requires zero unresolved executable details in the `## Ground-Truth Verification` section.
+This check is mandatory and cannot be waived by the Generated Tests Gate. A successful return requires zero unresolved operational details and complete provenance for every assertion. Phrases such as `expected-to-currently-fail`, `proxy for`, or `assumed instead` are forbidden in a successful manifest because they conceal whether code came from runtime evidence or an approved expected result.
 
 ### Step 5: Write the Automation Reference Back to TestRail
 
@@ -222,9 +228,9 @@ Write `.agent-workspace/{ticket-lower}/QA-TESTS-{KEY}.md`:
 ## TestRail Case Mapping
 ## Test Cases
 ## Ground-Truth Verification
-| Case | Live Route Observation | Live Locator / Semantic Observation | Visible Outcomes | Data Values Source | Unresolved |
-|---|---|---|---|---|---|
-| C123 | `/catalog` rendered after navigation | `getByRole('heading', { name: 'Catalog' })` observed | Empty-state text observed verbatim | `Services/InMemoryProductCatalog.cs` | None |
+| Case | Authenticated Final URL | Live Operational Locators | Requirement Assertions (source) | Current Outcome Observation | Data Values Source | Operational Blockers |
+|---|---|---|---|---|---|---|
+| C123 | `/catalog` | `getByRole('button', { name: 'Create' })` (`LIVE-OPERATIONAL`) | `getByRole('status', { name: 'Created' })` from `custom_expected` (`REQUIREMENT-DERIVED`) | Status absent during discovery | `TEST-DATA-C123.json` | None |
 ## Test-Only Infrastructure Changes
 ## Playwright Evidence Configuration
 ## Verified Execution Commands
@@ -246,7 +252,7 @@ TESTS GENERATED: {count}
 AC COVERAGE: {covered}/{total}
 TEST COMMANDS: {verified commands}
 PRODUCTION FILES MODIFIED: None
-GROUND-TRUTH VERIFICATION: {count} of {count} cases fully verified against the live application | 0 unresolved executable details
+GROUND-TRUTH VERIFICATION: {count} of {count} cases have live-verified operational paths and fully sourced assertions | 0 operational blockers | {N} currently absent approved outcomes
 FLAGGED ISSUES: {list or None}
 ```
 
